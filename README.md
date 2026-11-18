@@ -40,3 +40,8 @@ No setup needed. CI (`.github/workflows/build.yml`) builds on every push; on pus
 - **Versions:** `versionCode` = workflow run number, `versionName` = `VERSION_BASE.<run number>` (edit `VERSION_BASE` in the workflow) or the tag name for `v*` tags.
 - **Optional hardening:** if you add a repository secret `KEYSTORE_PASSPHRASE` *before the first run*, the keystore is stored encrypted with it. Without the secret the key's password is stored next to it, so on a public repo anyone could read the key.
 - **Never delete the `signing` branch** (or change the passphrase): a new key means everyone must uninstall before installing again.
+
+## v1.3 UI
+- Main screen: profile bar (⋮ menu for Save as / Import / Export / IEM / Delete), **Simple | Pro** switch, EQ On/Off pill, Settings sheet (gear).
+- Simple: Bass / Warmth / Vocals / Treble sliders + presets (Flat, Bass Boost, Vocal Clarity, Sibilance Tamer). Pro: draggable graph, band chips, editor for the selected band.
+- Engine options (auto-preamp, limiter, output switching, audio session, background) live in Settings. DSP engine unchanged.

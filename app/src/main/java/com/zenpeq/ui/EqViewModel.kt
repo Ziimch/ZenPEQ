@@ -11,6 +11,11 @@ import com.zenpeq.model.EqFilter
 import com.zenpeq.model.EqProfile
 import com.zenpeq.model.EqSettings
 import com.zenpeq.model.FilterType
+import com.zenpeq.model.Macro
+import com.zenpeq.model.SimpleMacros
+import com.zenpeq.model.SimplePreset
+import com.zenpeq.model.isSimpleCompatible
+import com.zenpeq.model.with
 import com.zenpeq.model.MAX_FILTERS
 import com.zenpeq.model.MAX_FREQ_HZ
 import com.zenpeq.model.MAX_GAIN_DB
@@ -125,6 +130,17 @@ class EqViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun clearGraphic() = edit { it.copy(graphic = emptyList()) }
+
+    /** Simple mode: a macro slider rebuilds the filters (a customised curve starts over from flat). */
+    fun setMacro(kind: Macro, value: Float) = edit { p ->
+        val base = if (p.isSimpleCompatible()) p.macros ?: SimpleMacros() else SimpleMacros()
+        val m = base.with(kind, value)
+        p.copy(macros = m, filters = m.toFilters(), graphic = emptyList())
+    }
+
+    fun applyPreset(preset: SimplePreset) = edit {
+        it.copy(macros = preset.macros, filters = preset.macros.toFilters(), graphic = emptyList())
+    }
     fun setAutoPreamp(on: Boolean) = edit { it.copy(autoPreamp = on) }
 
     fun select(id: String) {
@@ -158,6 +174,7 @@ class EqViewModel(app: Application) : AndroidViewModel(app) {
     fun setEnabled(on: Boolean) { viewModelScope.launch { repo.setEnabled(on) } }
     fun setAutoDevice(on: Boolean) { viewModelScope.launch { repo.setAutoDevice(on) } }
     fun setLimiter(on: Boolean) { viewModelScope.launch { repo.setLimiter(on) } }
+    fun setProMode(on: Boolean) { viewModelScope.launch { repo.setProMode(on) } }
     fun assignDevice(key: String, profileId: String) { viewModelScope.launch { repo.assignDevice(key, profileId) } }
     fun clearAssignment(key: String) { viewModelScope.launch { repo.clearDeviceAssignment(key) } }
 

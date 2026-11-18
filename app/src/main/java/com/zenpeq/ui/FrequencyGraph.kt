@@ -32,6 +32,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.zenpeq.audio.FilterMath
@@ -69,9 +70,12 @@ private fun DrawScope.curvePath(curve: DoubleArray): Path {
 fun FrequencyGraph(
     filters: List<EqFilter>,
     graphic: List<GraphicPoint>,
-    selected: Int,
-    onSelect: (Int) -> Unit,
-    onMove: (index: Int, hz: Float, db: Float) -> Unit,
+    selected: Int = 0,
+    onSelect: (Int) -> Unit = {},
+    onMove: (index: Int, hz: Float, db: Float) -> Unit = { _, _, _ -> },
+    interactive: Boolean = true,
+    showLabels: Boolean = true,
+    height: Dp = 220.dp,
 ) {
     val freqs = remember { DoubleArray(POINTS) { 20.0 * 1000.0.pow(it / (POINTS - 1.0)) } }
     val summed = remember(filters, graphic) { FilterMath.curve(filters, freqs, graphic) }
@@ -92,10 +96,11 @@ fun FrequencyGraph(
     Canvas(
         Modifier
             .fillMaxWidth()
-            .height(220.dp)
-            .pointerInput(Unit) {
+            .height(height)
+            .pointerInput(interactive) {
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
+                    if (!interactive) return@awaitEachGesture // leave the touch to the scrolling list
                     val w = size.width.toFloat()
                     val h = size.height.toFloat()
                     var best = -1
@@ -122,15 +127,15 @@ fun FrequencyGraph(
         val h = size.height
         for (db in listOf(-10f, 0f, 10f)) {
             drawLine(grid, Offset(0f, yOf(db, h)), Offset(w, yOf(db, h)), 1.dp.toPx())
-            drawText(textMeasurer, "%+.0f".format(db), Offset(2.dp.toPx(), yOf(db, h) - 12.dp.toPx()), labelStyle)
+            if (showLabels) drawText(textMeasurer, "%+.0f".format(db), Offset(2.dp.toPx(), yOf(db, h) - 12.dp.toPx()), labelStyle)
         }
         for ((hz, name) in listOf(100f to "100", 1000f to "1k", 10000f to "10k")) {
             drawLine(grid, Offset(xOf(hz, w), 0f), Offset(xOf(hz, w), h), 1.dp.toPx())
-            drawText(textMeasurer, name, Offset(xOf(hz, w) + 3.dp.toPx(), h - 14.dp.toPx()), labelStyle)
+            if (showLabels) drawText(textMeasurer, name, Offset(xOf(hz, w) + 3.dp.toPx(), h - 14.dp.toPx()), labelStyle)
         }
 
         // Individual band curves, subtle (selected one slightly stronger).
-        perBand.forEachIndexed { i, c ->
+        if (interactive) perBand.forEachIndexed { i, c ->
             if (c != null) {
                 drawPath(
                     curvePath(c),
@@ -148,7 +153,7 @@ fun FrequencyGraph(
         // Summed response, bright.
         drawPath(curvePath(summed), line, style = Stroke(width = 3.dp.toPx()))
 
-        filters.forEachIndexed { i, f ->
+        if (interactive) filters.forEachIndexed { i, f ->
             val c = Offset(xOf(f.freq, w), yOf(f.gainDb, h))
             val color: Color = if (f.enabled) pointColor else offColor
             if (i == selected) {

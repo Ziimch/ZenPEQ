@@ -32,6 +32,7 @@ class ZenRepository(context: Context) {
         val SESSION_MODE = stringPreferencesKey("session_mode")
         val BATTERY_DISMISSED = booleanPreferencesKey("battery_hint_dismissed")
         val LIMITER = booleanPreferencesKey("limiter_enabled")
+        val PRO_MODE = booleanPreferencesKey("pro_mode")
         val DEVICE_PROFILES = stringPreferencesKey("device_profiles_json")
     }
 
@@ -62,6 +63,7 @@ class ZenRepository(context: Context) {
                 .getOrDefault(SessionMode.AUTO),
             batteryHintDismissed = p[Keys.BATTERY_DISMISSED] ?: false,
             limiterEnabled = p[Keys.LIMITER] ?: true,
+            proMode = p[Keys.PRO_MODE] ?: false,
             deviceProfiles = readMap(p),
         )
     }.distinctUntilChanged()
@@ -120,6 +122,7 @@ class ZenRepository(context: Context) {
     suspend fun setEnabled(on: Boolean) { store.edit { it[Keys.ENABLED] = on } }
     suspend fun setAutoDevice(on: Boolean) { store.edit { it[Keys.AUTO_DEVICE] = on } }
     suspend fun setLimiter(on: Boolean) { store.edit { it[Keys.LIMITER] = on } }
+    suspend fun setProMode(on: Boolean) { store.edit { it[Keys.PRO_MODE] = on } }
     suspend fun setSessionMode(m: SessionMode) { store.edit { it[Keys.SESSION_MODE] = m.name } }
     suspend fun dismissBatteryHint() { store.edit { it[Keys.BATTERY_DISMISSED] = true } }
 }
