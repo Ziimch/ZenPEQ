@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/logo.png" width="120" alt="ZenPEQ logo"></p>
+
 # ZenPEQ
 
 Lightweight system-wide parametric EQ for Android (API 28+) built on `DynamicsProcessing`.
@@ -13,7 +15,7 @@ gradle wrapper --gradle-version 8.9   # once, to generate ./gradlew
 ./gradlew assembleDebug
 ```
 CI (`.github/workflows/build.yml`) uses `gradle/actions/setup-gradle`, so no wrapper is required there.
-Optional repo secrets for a signed release: `KEYSTORE_BASE64`, `KEYSTORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD`.
+Releases and signing: see **Releases & updates** below.
 
 ## Notes
 - The engine attaches to audio session 0. Google deprecated global effects, and some OEM builds ignore or reject them; the app shows the error when that happens.
@@ -30,3 +32,11 @@ Optional repo secrets for a signed release: `KEYSTORE_BASE64`, `KEYSTORE_PASSWOR
 - Biquad response (+ optional `GraphicEQ:` layer) rendered onto a 64-band PreEq (falls back to 32/16), plus a brickwall limiter (0 dBFS, 1 ms attack) after the EQ.
 - APO/AutoEq import/export incl. single-line `GraphicEQ:`; export can use LSC/HSC or LSQ/HSQ shelf tokens.
 - Per-output profiles: 3.5 mm, USB DAC, Bluetooth (by name) remember their last profile. Notification has an A/B bypass action.
+
+## Releases & updates
+No setup needed. CI (`.github/workflows/build.yml`) builds on every push; on pushes to `main`/`master` (or `v*` tags) it signs a release APK and publishes a GitHub Release with `ZenPEQ-<version>.apk`.
+
+- **Keystore:** created automatically on the first release run and kept on a `signing` branch. Every later run reuses it, so each APK installs as an update over the previous one.
+- **Versions:** `versionCode` = workflow run number, `versionName` = `VERSION_BASE.<run number>` (edit `VERSION_BASE` in the workflow) or the tag name for `v*` tags.
+- **Optional hardening:** if you add a repository secret `KEYSTORE_PASSPHRASE` *before the first run*, the keystore is stored encrypted with it. Without the secret the key's password is stored next to it, so on a public repo anyone could read the key.
+- **Never delete the `signing` branch** (or change the passphrase): a new key means everyone must uninstall before installing again.

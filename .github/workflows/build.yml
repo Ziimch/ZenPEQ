@@ -1,4 +1,4 @@
-name: Build APK
+name: Build & Release
 
 on:
   push:
@@ -8,16 +8,21 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write   # needed only for attaching APKs to a tagged release
+  contents: write   # create releases and the `signing` branch
+
+concurrency:
+  group: build-release
+  cancel-in-progress: false   # never cancel a run that may be creating the keystore
+
+env:
+  VERSION_BASE: "1.2"   # releases are named VERSION_BASE.<run number>
 
 jobs:
   build:
     runs-on: ubuntu-latest
     env:
-      KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
-      KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-      KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-      KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+      # Optional. If set, the keystore is stored encrypted with it. See README.
+      KEYSTORE_PASSPHRASE: ${{ secrets.KEYSTORE_PASSPHRASE }}
     steps:
       - uses: actions/checkout@v4
 
@@ -30,27 +35,122 @@ jobs:
         with:
           gradle-version: "8.9"
 
-      - name: Decode release keystore (optional)
-        if: env.KEYSTORE_BASE64 != ''
+      - name: Compute version
+        id: ver
         run: |
-          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
-          echo "KEYSTORE_FILE=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            NAME="${GITHUB_REF_NAME#v}"
+          else
+            NAME="${VERSION_BASE}.${GITHUB_RUN_NUMBER}"
+          fi
+          echo "VERSION_NAME=$NAME" >> "$GITHUB_ENV"
+          echo "VERSION_CODE=$GITHUB_RUN_NUMBER" >> "$GITHUB_ENV"
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
 
-      - name: Build debug + release APKs
-        run: gradle --no-daemon assembleDebug assembleRelease
+      - name: Build debug APK
+        run: gradle --no-daemon assembleDebug
 
       - uses: actions/upload-artifact@v4
         with:
           name: ZenPEQ-debug
           path: app/build/outputs/apk/debug/*.apk
 
+      - name: Load or create release keystore
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          P12="$RUNNER_TEMP/zenpeq.p12"
+          export STOREPASS=""
+          PLAIN=0
+
+          if git ls-remote --exit-code --heads origin signing >/dev/null 2>&1; then
+            echo "Reusing keystore from the 'signing' branch"
+            git fetch --depth=1 origin signing
+            if git cat-file -e FETCH_HEAD:zenpeq-keystore.enc 2>/dev/null; then
+              [[ -n "${KEYSTORE_PASSPHRASE:-}" ]] || { echo "::error::The keystore on the 'signing' branch is encrypted. Add the KEYSTORE_PASSPHRASE secret you used before."; exit 1; }
+              STOREPASS="$KEYSTORE_PASSPHRASE"
+              git show FETCH_HEAD:zenpeq-keystore.enc > "$RUNNER_TEMP/ks.enc"
+              openssl enc -d -aes-256-cbc -pbkdf2 -iter 600000 \
+                -pass env:KEYSTORE_PASSPHRASE -in "$RUNNER_TEMP/ks.enc" -out "$P12" \
+                || { echo "::error::Could not decrypt the keystore. Is KEYSTORE_PASSPHRASE the one used on the first run?"; exit 1; }
+            else
+              git show FETCH_HEAD:zenpeq-keystore.p12 > "$P12"
+              STOREPASS="$(git show FETCH_HEAD:password.txt)"
+              PLAIN=1
+            fi
+          else
+            echo "No keystore yet - creating one"
+            WORK="$(mktemp -d)"
+            if [[ -n "${KEYSTORE_PASSPHRASE:-}" ]]; then
+              STOREPASS="$KEYSTORE_PASSPHRASE"
+            else
+              STOREPASS="$(openssl rand -hex 24)"
+              PLAIN=1
+            fi
+            echo "::add-mask::$STOREPASS"
+            keytool -genkeypair -storetype PKCS12 -keystore "$P12" \
+              -alias zenpeq -keyalg RSA -keysize 4096 -validity 10000 \
+              -dname "CN=ZenPEQ, O=ZenPEQ, C=US" \
+              -storepass:env STOREPASS
+            if [[ "$PLAIN" == "1" ]]; then
+              cp "$P12" "$WORK/zenpeq-keystore.p12"
+              printf '%s' "$STOREPASS" > "$WORK/password.txt"
+            else
+              openssl enc -aes-256-cbc -pbkdf2 -iter 600000 -salt \
+                -pass env:KEYSTORE_PASSPHRASE -in "$P12" -out "$WORK/zenpeq-keystore.enc"
+            fi
+            printf 'ZenPEQ release signing key. Do not delete: losing it breaks in-place app updates.\n' > "$WORK/README.txt"
+            (
+              cd "$WORK"
+              git init -q
+              git checkout -q --orphan signing
+              git add .
+              git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+                commit -qm "Add release keystore"
+              git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+              git push -q origin signing
+            )
+          fi
+
+          keytool -list -storetype PKCS12 -keystore "$P12" -storepass:env STOREPASS >/dev/null
+          echo "::add-mask::$STOREPASS"
+
+          if [[ "$PLAIN" == "1" ]] && [[ "$(gh api "repos/${GITHUB_REPOSITORY}" --jq .private)" == "false" ]]; then
+            echo "::warning title=Signing key is readable::This repo is public and no KEYSTORE_PASSPHRASE secret is set, so the key on the 'signing' branch is not secret. Fine for a hobby app; add the secret before the first run (or recreate the branch) for a protected key."
+          fi
+
+          {
+            echo "KEYSTORE_FILE=$P12"
+            echo "KEYSTORE_PASSWORD=$STOREPASS"
+            echo "KEY_PASSWORD=$STOREPASS"
+            echo "KEY_ALIAS=zenpeq"
+          } >> "$GITHUB_ENV"
+
+      - name: Build signed release APK
+        if: github.event_name != 'pull_request'
+        run: |
+          gradle --no-daemon assembleRelease
+          cp app/build/outputs/apk/release/app-release.apk "ZenPEQ-${VERSION_NAME}.apk"
+          APKSIGNER="$(ls "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)"
+          "$APKSIGNER" verify --print-certs "ZenPEQ-${VERSION_NAME}.apk" | head -3
+
       - uses: actions/upload-artifact@v4
+        if: github.event_name != 'pull_request'
         with:
           name: ZenPEQ-release
-          path: app/build/outputs/apk/release/*.apk
+          path: ZenPEQ-*.apk
 
-      - name: Attach APKs to GitHub release
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: Publish GitHub Release
+        if: github.event_name != 'pull_request'
         uses: softprops/action-gh-release@v2
         with:
-          files: app/build/outputs/apk/*/*.apk
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('v{0}', steps.ver.outputs.name) }}
+          target_commitish: ${{ github.sha }}
+          name: ZenPEQ ${{ steps.ver.outputs.name }}
+          generate_release_notes: true
+          make_latest: true
+          files: ZenPEQ-*.apk
+          body: |
+            Signed release APK. Installs over the previous version (same signing key, higher versionCode).
