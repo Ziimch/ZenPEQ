@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.zenpeq.ZenPeqApp
+import com.zenpeq.audio.EngineStatus
 import com.zenpeq.data.ImportPreview
 import com.zenpeq.data.ProfileIo
 import com.zenpeq.model.EqFilter
@@ -11,6 +12,13 @@ import com.zenpeq.model.EqProfile
 import com.zenpeq.model.EqSettings
 import com.zenpeq.model.FilterType
 import com.zenpeq.model.MAX_FILTERS
+import com.zenpeq.model.MAX_FREQ_HZ
+import com.zenpeq.model.MAX_GAIN_DB
+import com.zenpeq.model.MAX_PREAMP_DB
+import com.zenpeq.model.MIN_FREQ_HZ
+import com.zenpeq.model.MIN_PREAMP_DB
+import com.zenpeq.model.MAX_Q
+import com.zenpeq.model.MIN_Q
 import com.zenpeq.model.SessionMode
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -82,14 +90,15 @@ class EqViewModel(app: Application) : AndroidViewModel(app) {
     /** Graph drag: horizontal = frequency, vertical = gain. */
     fun moveFilter(i: Int, hz: Float, db: Float) = edit { p ->
         val f = p.filters.getOrNull(i) ?: return@edit p
-        val freq = if (hz < 1000f) hz.roundToInt().toFloat() else (hz / 10).roundToInt() * 10f
-        val gain = ((db * 10).roundToInt() / 10f).coerceIn(-15f, 15f)
+        val freq = (if (hz < 1000f) hz.roundToInt().toFloat() else (hz / 10).roundToInt() * 10f)
+            .coerceIn(MIN_FREQ_HZ, MAX_FREQ_HZ)
+        val gain = ((db * 10).roundToInt() / 10f).coerceIn(-MAX_GAIN_DB, MAX_GAIN_DB)
         p.copy(filters = p.filters.toMutableList().also { it[i] = f.copy(freq = freq, gainDb = gain) })
     }
 
     fun nudgeGain(i: Int, delta: Float) = edit { p ->
         val f = p.filters.getOrNull(i) ?: return@edit p
-        val gain = (((f.gainDb + delta) * 10).roundToInt() / 10f).coerceIn(-15f, 15f)
+        val gain = (((f.gainDb + delta) * 10).roundToInt() / 10f).coerceIn(-MAX_GAIN_DB, MAX_GAIN_DB)
         p.copy(filters = p.filters.toMutableList().also { it[i] = f.copy(gainDb = gain) })
     }
 
@@ -102,13 +111,25 @@ class EqViewModel(app: Application) : AndroidViewModel(app) {
         p.copy(filters = p.filters.filterIndexed { idx, _ -> idx != i })
     }
 
-    fun setPreamp(db: Float) = edit { it.copy(preampDb = db) }
+    fun setPreamp(db: Float) = edit { it.copy(preampDb = db.coerceIn(MIN_PREAMP_DB, MAX_PREAMP_DB)) }
+
+    fun stepQ(i: Int, delta: Float) = edit { p ->
+        val f = p.filters.getOrNull(i) ?: return@edit p
+        val q = (((f.q + delta) * 100).roundToInt() / 100f).coerceIn(MIN_Q, MAX_Q)
+        p.copy(filters = p.filters.toMutableList().also { it[i] = f.copy(q = q) })
+    }
+
+    fun nudgePreamp(delta: Float) = edit {
+        it.copy(preampDb = (((it.preampDb + delta) * 10).roundToInt() / 10f).coerceIn(MIN_PREAMP_DB, MAX_PREAMP_DB))
+    }
+
+    fun clearGraphic() = edit { it.copy(graphic = emptyList()) }
     fun setAutoPreamp(on: Boolean) = edit { it.copy(autoPreamp = on) }
 
     fun select(id: String) {
         viewModelScope.launch {
             flush() // don't lose a pending edit
-            repo.setActive(id)
+            repo.setActive(id, deviceKey())
         }
     }
 
@@ -117,7 +138,7 @@ class EqViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             val copy = d.copy(id = UUID.randomUUID().toString(), name = name.ifBlank { "Custom EQ" })
             repo.upsertProfile(copy)
-            repo.setActive(copy.id)
+            repo.setActive(copy.id, deviceKey())
         }
     }
 
@@ -134,7 +155,12 @@ class EqViewModel(app: Application) : AndroidViewModel(app) {
 
     fun setIem(id: String) { viewModelScope.launch { repo.setIem(id) } }
     fun setEnabled(on: Boolean) { viewModelScope.launch { repo.setEnabled(on) } }
-    fun setAutoHeadset(on: Boolean) { viewModelScope.launch { repo.setAutoHeadset(on) } }
+    fun setAutoDevice(on: Boolean) { viewModelScope.launch { repo.setAutoDevice(on) } }
+    fun setLimiter(on: Boolean) { viewModelScope.launch { repo.setLimiter(on) } }
+    fun assignDevice(key: String, profileId: String) { viewModelScope.launch { repo.assignDevice(key, profileId) } }
+    fun clearAssignment(key: String) { viewModelScope.launch { repo.clearDeviceAssignment(key) } }
+
+    private fun deviceKey(): String? = EngineStatus.info.value.deviceKey.takeIf { it.isNotEmpty() }
     fun setSessionMode(m: SessionMode) { viewModelScope.launch { repo.setSessionMode(m) } }
     fun dismissBatteryHint() { viewModelScope.launch { repo.dismissBatteryHint() } }
 
@@ -152,13 +178,14 @@ class EqViewModel(app: Application) : AndroidViewModel(app) {
                         // Honour the file's own Preamp line if present; otherwise let Auto-Preamp decide.
                         autoPreamp = r.preampDb == null,
                         filters = r.filters,
+                        graphic = r.graphic,
                     )
                     repo.upsertProfile(p)
-                    repo.setActive(p.id)
+                    repo.setActive(p.id, deviceKey())
                 }
                 is ImportPreview.JsonProfiles -> {
                     preview.profiles.forEach { repo.upsertProfile(it) }
-                    preview.profiles.firstOrNull()?.let { repo.setActive(it.id) }
+                    preview.profiles.firstOrNull()?.let { repo.setActive(it.id, deviceKey()) }
                 }
                 else -> Unit
             }

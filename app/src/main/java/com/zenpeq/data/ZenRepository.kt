@@ -1,6 +1,8 @@
 package com.zenpeq.data
 
 import android.content.Context
+import androidx.datastore.preferences.core.MutablePreferences
+import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
@@ -26,9 +28,11 @@ class ZenRepository(context: Context) {
         val ACTIVE = stringPreferencesKey("active_profile")
         val IEM = stringPreferencesKey("iem_profile")
         val ENABLED = booleanPreferencesKey("eq_enabled")
-        val AUTO_HEADSET = booleanPreferencesKey("auto_headset")
+        val AUTO_DEVICE = booleanPreferencesKey("auto_headset") // legacy key name kept for upgrades
         val SESSION_MODE = stringPreferencesKey("session_mode")
         val BATTERY_DISMISSED = booleanPreferencesKey("battery_hint_dismissed")
+        val LIMITER = booleanPreferencesKey("limiter_enabled")
+        val DEVICE_PROFILES = stringPreferencesKey("device_profiles_json")
     }
 
     private fun decode(raw: String?): List<EqProfile> =
@@ -36,18 +40,29 @@ class ZenRepository(context: Context) {
             ?.takeIf { it.isNotEmpty() }
             ?: Presets.defaults
 
+    private fun readMap(prefs: Preferences): Map<String, String> =
+        prefs[Keys.DEVICE_PROFILES]
+            ?.let { runCatching { json.decodeFromString<Map<String, String>>(it) }.getOrNull() }
+            ?: emptyMap()
+
+    private fun writeMap(prefs: MutablePreferences, map: Map<String, String>) {
+        prefs[Keys.DEVICE_PROFILES] = json.encodeToString(map)
+    }
+
     val profiles: Flow<List<EqProfile>> =
         store.data.map { decode(it[Keys.PROFILES]) }.distinctUntilChanged()
 
     val settings: Flow<EqSettings> = store.data.map { p ->
         EqSettings(
             eqEnabled = p[Keys.ENABLED] ?: true,
-            autoHeadset = p[Keys.AUTO_HEADSET] ?: true,
+            autoDevice = p[Keys.AUTO_DEVICE] ?: true,
             activeProfileId = p[Keys.ACTIVE] ?: Presets.DEFAULT_IEM_ID,
             iemProfileId = p[Keys.IEM] ?: Presets.DEFAULT_IEM_ID,
             sessionMode = runCatching { SessionMode.valueOf(p[Keys.SESSION_MODE] ?: "AUTO") }
                 .getOrDefault(SessionMode.AUTO),
             batteryHintDismissed = p[Keys.BATTERY_DISMISSED] ?: false,
+            limiterEnabled = p[Keys.LIMITER] ?: true,
+            deviceProfiles = readMap(p),
         )
     }.distinctUntilChanged()
 
@@ -68,21 +83,43 @@ class ZenRepository(context: Context) {
             val fallback = list.first().id
             if ((prefs[Keys.ACTIVE] ?: Presets.DEFAULT_IEM_ID) == id) prefs[Keys.ACTIVE] = fallback
             if ((prefs[Keys.IEM] ?: Presets.DEFAULT_IEM_ID) == id) prefs[Keys.IEM] = fallback
+            writeMap(prefs, readMap(prefs).filterValues { it != id })
         }
     }
 
-    suspend fun setActive(id: String) { store.edit { it[Keys.ACTIVE] = id } }
-    suspend fun setIem(id: String) { store.edit { it[Keys.IEM] = id } }
-    suspend fun setEnabled(on: Boolean) { store.edit { it[Keys.ENABLED] = on } }
-    suspend fun setAutoHeadset(on: Boolean) { store.edit { it[Keys.AUTO_HEADSET] = on } }
-    suspend fun setSessionMode(m: SessionMode) { store.edit { it[Keys.SESSION_MODE] = m.name } }
-    suspend fun dismissBatteryHint() { store.edit { it[Keys.BATTERY_DISMISSED] = true } }
-
-    /** Wired headset plugged in: switch to the saved IEM profile and turn the EQ on. */
-    suspend fun activateOnHeadset() {
+    /**
+     * Makes [id] the active profile. If [deviceKey] is given and per-device switching is on, it is also
+     * recorded as the last profile used on that output.
+     */
+    suspend fun setActive(id: String, deviceKey: String? = null) {
         store.edit { prefs ->
-            prefs[Keys.ACTIVE] = prefs[Keys.IEM] ?: Presets.DEFAULT_IEM_ID
+            prefs[Keys.ACTIVE] = id
+            if (deviceKey != null && (prefs[Keys.AUTO_DEVICE] ?: true)) {
+                writeMap(prefs, readMap(prefs) + (deviceKey to id))
+            }
+        }
+    }
+
+    suspend fun assignDevice(deviceKey: String, id: String) {
+        store.edit { prefs -> writeMap(prefs, readMap(prefs) + (deviceKey to id)) }
+    }
+
+    suspend fun clearDeviceAssignment(deviceKey: String) {
+        store.edit { prefs -> writeMap(prefs, readMap(prefs) - deviceKey) }
+    }
+
+    /** Device rule hit: switch to [id] and make sure the EQ is on. */
+    suspend fun activateProfile(id: String) {
+        store.edit { prefs ->
+            prefs[Keys.ACTIVE] = id
             prefs[Keys.ENABLED] = true
         }
     }
+
+    suspend fun setIem(id: String) { store.edit { it[Keys.IEM] = id } }
+    suspend fun setEnabled(on: Boolean) { store.edit { it[Keys.ENABLED] = on } }
+    suspend fun setAutoDevice(on: Boolean) { store.edit { it[Keys.AUTO_DEVICE] = on } }
+    suspend fun setLimiter(on: Boolean) { store.edit { it[Keys.LIMITER] = on } }
+    suspend fun setSessionMode(m: SessionMode) { store.edit { it[Keys.SESSION_MODE] = m.name } }
+    suspend fun dismissBatteryHint() { store.edit { it[Keys.BATTERY_DISMISSED] = true } }
 }

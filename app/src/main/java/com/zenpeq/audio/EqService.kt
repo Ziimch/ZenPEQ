@@ -38,21 +38,20 @@ class EqService : Service() {
     private data class Snapshot(
         val settings: EqSettings,
         val profiles: List<EqProfile>,
-        val headset: Boolean,
+        val output: OutputDevice,
         val sessions: Set<Int>,
     )
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val engine = EqEngine()
     private lateinit var audioManager: AudioManager
-    private val headset = MutableStateFlow(false)
+    private val output = MutableStateFlow(OutputDevices.DEFAULT)
     private val repo: ZenRepository get() = (application as ZenPeqApp).repo
-
     private val sessionReceiver = AudioSessionReceiver()
 
     private val deviceCallback = object : AudioDeviceCallback() {
-        override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>) = refreshHeadset()
-        override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>) = refreshHeadset()
+        override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>) = refreshOutput()
+        override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>) = refreshOutput()
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -62,13 +61,12 @@ class EqService : Service() {
         audioManager = getSystemService(AudioManager::class.java)
         createChannel()
         ServiceCompat.startForeground(
-            this, NOTIF_ID, notification(getString(R.string.notif_starting)),
+            this, NOTIF_ID, notification(getString(R.string.notif_starting), true),
             ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK,
         )
 
-        headset.value = wiredConnected()
+        output.value = OutputDevices.resolve(audioManager)
         audioManager.registerAudioDeviceCallback(deviceCallback, Handler(Looper.getMainLooper()))
-
         ContextCompat.registerReceiver(
             this, sessionReceiver,
             IntentFilter().apply {
@@ -78,17 +76,21 @@ class EqService : Service() {
             ContextCompat.RECEIVER_EXPORTED, // players are other apps
         )
 
+        scope.launch { applyDeviceRules(output.value, initial = true) }
         scope.launch {
-            combine(repo.settings, repo.profiles, headset, SessionRegistry.sessions) { s, p, h, ses ->
-                Snapshot(s, p, h, ses.keys)
+            combine(repo.settings, repo.profiles, output, SessionRegistry.sessions) { s, p, o, ses ->
+                Snapshot(s, p, o, ses.keys)
             }.collect { render(it) }
         }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == ACTION_STOP) {
-            stopSelf()
-            return START_NOT_STICKY
+        when (intent?.action) {
+            ACTION_STOP -> {
+                stopSelf()
+                return START_NOT_STICKY
+            }
+            ACTION_TOGGLE -> scope.launch { repo.setEnabled(!repo.settings.first().eqEnabled) } // A/B bypass
         }
         return START_STICKY
     }
@@ -102,44 +104,60 @@ class EqService : Service() {
         super.onDestroy()
     }
 
-    private fun wiredConnected(): Boolean =
-        audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).any {
-            it.type == AudioDeviceInfo.TYPE_WIRED_HEADSET || it.type == AudioDeviceInfo.TYPE_WIRED_HEADPHONES
-        }
+    private fun refreshOutput() {
+        val now = OutputDevices.resolve(audioManager)
+        if (now.key == output.value.key) return
+        output.value = now
+        scope.launch { applyDeviceRules(now, initial = false) }
+    }
 
-    private fun refreshHeadset() {
-        val now = wiredConnected()
-        if (now == headset.value) return
-        headset.value = now
-        scope.launch {
-            if (!repo.settings.first().autoHeadset) return@launch
-            if (now) repo.activateOnHeadset() else repo.setEnabled(false) // unplugged -> bypass
+    /**
+     * Output changed:
+     *  1. a profile was last used on this output -> load it and enable the EQ
+     *  2. (not on startup) unassigned 3.5 mm / USB -> the ★ IEM profile
+     *  3. (not on startup) unassigned phone speaker -> bypass
+     *  Anything else (e.g. unassigned Bluetooth) leaves the current state alone.
+     */
+    private suspend fun applyDeviceRules(dev: OutputDevice, initial: Boolean) {
+        val s = repo.settings.first()
+        if (!s.autoDevice) return
+        val ids = repo.profiles.first().map { it.id }.toSet()
+        val assigned = s.deviceProfiles[dev.key]?.takeIf { it in ids }
+        when {
+            assigned != null -> repo.activateProfile(assigned)
+            initial -> Unit
+            (dev.kind == OutputKind.WIRED || dev.kind == OutputKind.USB) && s.iemProfileId in ids ->
+                repo.activateProfile(s.iemProfileId)
+            dev.kind == OutputKind.SPEAKER -> repo.setEnabled(false)
         }
     }
 
     private fun render(snap: Snapshot) {
         val s = snap.settings
         val profile = snap.profiles.firstOrNull { it.id == s.activeProfileId } ?: snap.profiles.firstOrNull()
-        val r = engine.apply(profile, s.eqEnabled, s.sessionMode, snap.sessions)
+        val r = engine.apply(profile, s.eqEnabled, s.sessionMode, snap.sessions, s.limiterEnabled)
         EngineStatus.info.value = EngineInfo(
             serviceRunning = true,
             route = r.route,
-            headsetConnected = snap.headset,
             bands = r.bands,
             appSessions = r.appSessions,
             preampDb = r.preampDb,
             peakDb = r.peakDb,
+            limiterActive = r.limiterActive,
+            deviceKey = snap.output.key,
+            deviceLabel = snap.output.label,
             error = r.error,
         )
         val pre = "preamp ${"%.1f".format(r.preampDb)} dB"
         val text = when {
-            r.route == EngineRoute.GLOBAL -> "${profile?.name} · global · $pre"
-            r.route == EngineRoute.PER_APP && r.appSessions > 0 -> "${profile?.name} · ${r.appSessions} player(s) · $pre"
+            r.route == EngineRoute.GLOBAL -> "${profile?.name} · ${snap.output.label} · $pre"
+            r.route == EngineRoute.PER_APP && r.appSessions > 0 ->
+                "${profile?.name} · ${r.appSessions} player(s) · $pre"
             r.route == EngineRoute.PER_APP -> "Waiting for a player to open an audio session"
             r.error != null -> "Effect unavailable: ${r.error}"
-            else -> "Bypassed"
+            else -> "Bypassed · ${snap.output.label}"
         }
-        getSystemService(NotificationManager::class.java).notify(NOTIF_ID, notification(text))
+        getSystemService(NotificationManager::class.java).notify(NOTIF_ID, notification(text, s.eqEnabled))
     }
 
     private fun createChannel() {
@@ -147,9 +165,12 @@ class EqService : Service() {
         getSystemService(NotificationManager::class.java).createNotificationChannel(ch)
     }
 
-    private fun notification(text: String): Notification {
+    private fun notification(text: String, eqOn: Boolean): Notification {
         val open = PendingIntent.getActivity(
             this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE,
+        )
+        val toggle = PendingIntent.getService(
+            this, 2, Intent(this, EqService::class.java).setAction(ACTION_TOGGLE), PendingIntent.FLAG_IMMUTABLE,
         )
         val stop = PendingIntent.getService(
             this, 1, Intent(this, EqService::class.java).setAction(ACTION_STOP), PendingIntent.FLAG_IMMUTABLE,
@@ -159,6 +180,7 @@ class EqService : Service() {
             .setContentTitle("ZenPEQ")
             .setContentText(text)
             .setContentIntent(open)
+            .addAction(0, if (eqOn) "Bypass (A)" else "Enable EQ (B)", toggle)
             .addAction(0, getString(R.string.stop), stop)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
@@ -168,6 +190,7 @@ class EqService : Service() {
 
     companion object {
         const val ACTION_STOP = "com.zenpeq.action.STOP"
+        const val ACTION_TOGGLE = "com.zenpeq.action.TOGGLE"
         private const val CHANNEL = "engine"
         private const val NOTIF_ID = 1
 

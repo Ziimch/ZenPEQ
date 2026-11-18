@@ -72,6 +72,11 @@ import com.zenpeq.audio.FilterMath
 import com.zenpeq.model.EqFilter
 import com.zenpeq.model.FilterType
 import com.zenpeq.model.MAX_FILTERS
+import com.zenpeq.model.MAX_GAIN_DB
+import com.zenpeq.model.MAX_PREAMP_DB
+import com.zenpeq.model.MAX_Q
+import com.zenpeq.model.MIN_PREAMP_DB
+import com.zenpeq.model.MIN_Q
 import com.zenpeq.model.SessionMode
 import kotlin.math.exp
 import kotlin.math.ln
@@ -90,6 +95,7 @@ fun ZenApp(vm: EqViewModel = viewModel()) {
     var showExport by remember { mutableStateOf(false) }
     var showSaveAs by remember { mutableStateOf(false) }
     var showPicker by remember { mutableStateOf(false) }
+    var numeric by remember { mutableStateOf<Pair<Int, NumericField>?>(null) } // (band index, field)
     var selected by rememberSaveable { mutableIntStateOf(0) }
     var ignoringBattery by remember { mutableStateOf(true) }
 
@@ -116,21 +122,29 @@ fun ZenApp(vm: EqViewModel = viewModel()) {
                 CircularProgressIndicator()
             }
         } else {
-            val peak = remember(d.filters) {
-                max(0.0, FilterMath.curve(d.filters, BandGrid(48).centers).max())
+            val peak = remember(d.filters, d.graphic) {
+                max(0.0, FilterMath.curve(d.filters, BandGrid(64).centers, d.graphic).max())
             }
             val sel = selected.coerceIn(0, max(0, d.filters.size - 1))
+            val assigned = profiles.firstOrNull { it.id == settings.deviceProfiles[info.deviceKey] }
             LazyColumn(
                 modifier = Modifier.fillMaxSize().padding(pad),
                 contentPadding = PaddingValues(16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 item {
+                    // A/B bypass
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text("ZenPEQ", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f))
-                        Text(if (settings.eqEnabled) "ON" else "OFF", style = MaterialTheme.typography.labelLarge)
+                        FilterChip(
+                            selected = !settings.eqEnabled, onClick = { vm.setEnabled(false) },
+                            label = { Text("A · Bypass") },
+                        )
                         Spacer(Modifier.width(8.dp))
-                        Switch(checked = settings.eqEnabled, onCheckedChange = vm::setEnabled)
+                        FilterChip(
+                            selected = settings.eqEnabled, onClick = { vm.setEnabled(true) },
+                            label = { Text("B · EQ") },
+                        )
                     }
                 }
                 if (!settings.batteryHintDismissed && !ignoringBattery) {
@@ -167,10 +181,25 @@ fun ZenApp(vm: EqViewModel = viewModel()) {
                 item {
                     ZenCard {
                         RowSwitch(
-                            "Auto-switch on wired headset",
-                            "Plug in 3.5 mm: load the ★ IEM profile and enable EQ. Unplug: bypass.",
-                            settings.autoHeadset, vm::setAutoHeadset,
+                            "Auto-switch by output device",
+                            "Loads the profile last used on each output: 3.5 mm, USB DAC, or a Bluetooth device by name. " +
+                                "Unassigned 3.5 mm/USB uses the ★ IEM profile; the unassigned phone speaker bypasses.",
+                            settings.autoDevice, vm::setAutoDevice,
                         )
+                        if (info.deviceKey.isNotEmpty()) {
+                            Text("Output: ${info.deviceLabel}", style = MaterialTheme.typography.bodyMedium)
+                            Text(
+                                "Assigned profile: ${assigned?.name ?: "none"}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Row {
+                                TextButton(onClick = { vm.assignDevice(info.deviceKey, d.id) }) { Text("Assign current") }
+                                TextButton(onClick = { vm.clearAssignment(info.deviceKey) }, enabled = assigned != null) {
+                                    Text("Clear")
+                                }
+                            }
+                        }
                     }
                 }
                 item {
@@ -202,26 +231,48 @@ fun ZenApp(vm: EqViewModel = viewModel()) {
                         if (d.autoPreamp) {
                             Text("Preamp: ${"%.1f".format(-peak)} dB", style = MaterialTheme.typography.bodyMedium)
                         } else {
-                            LabeledSlider("Preamp", "%.1f dB".format(d.preampDb), d.preampDb, -24f..6f) {
-                                vm.setPreamp((it * 10).roundToInt() / 10f)
-                            }
+                            LabeledSlider(
+                                "Preamp", "%.1f dB".format(d.preampDb), d.preampDb, MIN_PREAMP_DB..MAX_PREAMP_DB,
+                                onChange = { vm.setPreamp((it * 10).roundToInt() / 10f) },
+                                onValueClick = { numeric = -1 to NumericField.PREAMP },
+                                step = 0.1f, onStep = vm::nudgePreamp,
+                            )
                         }
+                        RowSwitch(
+                            "Brickwall limiter",
+                            "Peak limiter at 0 dBFS, 1 ms attack, after the EQ. Stops clipping from boosts and filter overlap.",
+                            settings.limiterEnabled, vm::setLimiter,
+                        )
                     }
                 }
                 item {
                     ZenCard {
                         FrequencyGraph(
                             filters = d.filters,
+                            graphic = d.graphic,
                             selected = sel,
                             onSelect = { selected = it },
                             onMove = vm::moveFilter,
                         )
-                        GainFineTune(sel, d.filters.getOrNull(sel)) { vm.nudgeGain(sel, it) }
+                        GainFineTune(
+                            sel, d.filters.getOrNull(sel),
+                            onNudge = { vm.nudgeGain(sel, it) },
+                            onEdit = { numeric = sel to NumericField.GAIN },
+                        )
                         Text(
-                            "Drag a point: ↔ frequency, ↕ gain · 20 Hz – 20 kHz, ±15 dB",
+                            "Drag a point: ↔ frequency, ↕ gain · thin lines = bands, bright = sum",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
+                        if (d.graphic.isNotEmpty()) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    "GraphicEQ layer: ${d.graphic.size} points (dashed)",
+                                    Modifier.weight(1f), style = MaterialTheme.typography.bodySmall,
+                                )
+                                TextButton(onClick = vm::clearGraphic) { Text("Clear") }
+                            }
+                        }
                     }
                 }
                 item {
@@ -241,6 +292,9 @@ fun ZenApp(vm: EqViewModel = viewModel()) {
                         index = i, f = f, highlighted = i == sel,
                         onSelect = { selected = i },
                         onChange = { vm.updateFilter(i, it) },
+                        onStepGain = { vm.nudgeGain(i, it) },
+                        onStepQ = { vm.stepQ(i, it) },
+                        onEdit = { numeric = i to it },
                         onDelete = { vm.removeFilter(i) },
                     )
                 }
@@ -273,6 +327,26 @@ fun ZenApp(vm: EqViewModel = viewModel()) {
             vm.saveAs(it); showSaveAs = false
         }
     }
+    numeric?.let { (idx, field) ->
+        val f = current?.filters?.getOrNull(idx)
+        val initial = when (field) {
+            NumericField.PREAMP -> current?.preampDb
+            NumericField.FREQ -> f?.freq
+            NumericField.GAIN -> f?.gainDb
+            NumericField.Q -> f?.q
+        }
+        if (initial != null) {
+            NumericInputDialog(field, initial, onDismiss = { numeric = null }) { v ->
+                when (field) {
+                    NumericField.PREAMP -> vm.setPreamp(v)
+                    NumericField.FREQ -> f?.let { vm.updateFilter(idx, it.copy(freq = v)) }
+                    NumericField.GAIN -> f?.let { vm.updateFilter(idx, it.copy(gainDb = v)) }
+                    NumericField.Q -> f?.let { vm.updateFilter(idx, it.copy(q = v)) }
+                }
+                numeric = null
+            }
+        } else numeric = null
+    }
 }
 
 private fun sessionLabel(m: SessionMode) = when (m) {
@@ -283,9 +357,15 @@ private fun sessionLabel(m: SessionMode) = when (m) {
 
 private fun sessionHint(m: SessionMode) = when (m) {
     SessionMode.AUTO -> "Global session first; falls back to per-app sessions if the device rejects it."
-    SessionMode.GLOBAL -> "Global session only."
+    SessionMode.GLOBAL -> "Global session (0) only."
     SessionMode.PER_APP ->
         "Attach to each player's own session. Use this if Global is accepted but you hear no change."
+}
+
+private fun typeLabel(t: FilterType) = when (t) {
+    FilterType.PK -> "Peak"
+    FilterType.LSC -> "Low-shelf"
+    FilterType.HSC -> "High-shelf"
 }
 
 private fun requestIgnoreBattery(ctx: Context) {
@@ -328,20 +408,23 @@ private fun BatteryHintCard(onAllow: () -> Unit, onDismiss: () -> Unit) {
 @Composable
 private fun StatusCard(info: EngineInfo) {
     ZenCard {
+        val limiter = if (info.limiterActive) " · limiter" else ""
         val line = when {
             !info.serviceRunning -> "Engine starting…"
-            info.route == EngineRoute.GLOBAL -> "EQ active · global session · ${info.bands} render bands"
+            info.route == EngineRoute.GLOBAL -> "EQ active · global session · ${info.bands} bands$limiter"
             info.route == EngineRoute.PER_APP && info.appSessions > 0 ->
-                "EQ active · ${info.appSessions} player session(s)"
+                "EQ active · ${info.appSessions} player session(s) · ${info.bands} bands$limiter"
             info.route == EngineRoute.PER_APP -> "Waiting for a player to open an audio session"
             info.error != null -> "Effect unavailable"
             else -> "Bypassed"
         }
         Text(line, style = MaterialTheme.typography.bodyMedium)
-        Text(
-            if (info.headsetConnected) "Wired headset connected" else "No wired headset",
-            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        if (info.deviceLabel.isNotEmpty()) {
+            Text(
+                "Output: ${info.deviceLabel}",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
         info.error?.let {
             if (info.route == EngineRoute.NONE) {
                 Text(
@@ -365,10 +448,12 @@ private fun RowSwitch(title: String, subtitle: String, checked: Boolean, onChang
             Text(title, style = MaterialTheme.typography.titleSmall)
             Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
+        Spacer(Modifier.width(8.dp))
         Switch(checked = checked, onCheckedChange = onChange)
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun FilterCard(
     index: Int,
@@ -376,6 +461,9 @@ private fun FilterCard(
     highlighted: Boolean,
     onSelect: () -> Unit,
     onChange: (EqFilter) -> Unit,
+    onStepGain: (Float) -> Unit,
+    onStepQ: (Float) -> Unit,
+    onEdit: (NumericField) -> Unit,
     onDelete: () -> Unit,
 ) {
     ZenCard(highlighted) {
@@ -385,34 +473,70 @@ private fun FilterCard(
                 Modifier.weight(1f).clickable(onClick = onSelect),
                 style = MaterialTheme.typography.titleSmall,
             )
-            FilterType.entries.forEach { t ->
-                FilterChip(selected = f.type == t, onClick = { onChange(f.copy(type = t)) }, label = { Text(t.name) })
-                Spacer(Modifier.width(4.dp))
-            }
             Switch(checked = f.enabled, onCheckedChange = { onChange(f.copy(enabled = it)) })
             IconButton(onClick = onDelete) { Icon(Icons.Default.Delete, "Remove band") }
         }
-        LabeledSlider("Freq", formatHz(f.freq), ln(f.freq), ln(20f)..ln(20_000f)) {
-            onChange(f.copy(freq = exp(it).let { hz -> if (hz < 1000) hz.roundToInt().toFloat() else (hz / 10).roundToInt() * 10f }))
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilterType.entries.forEach { t ->
+                FilterChip(selected = f.type == t, onClick = { onChange(f.copy(type = t)) }, label = { Text(typeLabel(t)) })
+            }
         }
-        LabeledSlider("Gain", "%.1f dB".format(f.gainDb), f.gainDb, -15f..15f) {
-            onChange(f.copy(gainDb = (it * 10).roundToInt() / 10f))
-        }
-        LabeledSlider("Q", "%.2f".format(f.q), f.q, 0.1f..10f) {
-            onChange(f.copy(q = (it * 100).roundToInt() / 100f))
-        }
+        LabeledSlider(
+            "Frequency", formatHz(f.freq), ln(f.freq), ln(20f)..ln(20_000f),
+            onChange = {
+                onChange(f.copy(freq = exp(it).let { hz -> if (hz < 1000) hz.roundToInt().toFloat() else (hz / 10).roundToInt() * 10f }))
+            },
+            onValueClick = { onEdit(NumericField.FREQ) },
+        )
+        LabeledSlider(
+            "Gain", "%.1f dB".format(f.gainDb), f.gainDb, -MAX_GAIN_DB..MAX_GAIN_DB,
+            onChange = { onChange(f.copy(gainDb = (it * 10).roundToInt() / 10f)) },
+            onValueClick = { onEdit(NumericField.GAIN) },
+            step = 0.1f, onStep = onStepGain,
+        )
+        LabeledSlider(
+            "Q", "%.2f".format(f.q), f.q, MIN_Q..MAX_Q,
+            onChange = { onChange(f.copy(q = (it * 100).roundToInt() / 100f)) },
+            onValueClick = { onEdit(NumericField.Q) },
+            step = 0.1f, onStep = onStepQ,
+        )
     }
 }
 
+/** Value text is tappable (exact numeric entry); optional ±step buttons sit beside it. */
 @Composable
 private fun LabeledSlider(
-    label: String, valueText: String, value: Float,
-    range: ClosedFloatingPointRange<Float>, onChange: (Float) -> Unit,
+    label: String,
+    valueText: String,
+    value: Float,
+    range: ClosedFloatingPointRange<Float>,
+    onChange: (Float) -> Unit,
+    onValueClick: (() -> Unit)? = null,
+    step: Float = 0f,
+    onStep: ((Float) -> Unit)? = null,
 ) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(label, Modifier.width(48.dp), style = MaterialTheme.typography.bodySmall)
-        Slider(value = value.coerceIn(range), onValueChange = onChange, valueRange = range, modifier = Modifier.weight(1f))
-        Text(valueText, Modifier.width(76.dp), textAlign = TextAlign.End, style = MaterialTheme.typography.bodySmall)
+    Column {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(label, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
+            if (onStep != null) {
+                OutlinedButton(onClick = { onStep(-step) }, contentPadding = PaddingValues(horizontal = 10.dp)) {
+                    Text("−${"%.1f".format(step)}")
+                }
+            }
+            Text(
+                valueText,
+                Modifier.width(88.dp).let { if (onValueClick != null) it.clickable(onClick = onValueClick) else it },
+                textAlign = TextAlign.Center,
+                color = if (onValueClick != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            if (onStep != null) {
+                OutlinedButton(onClick = { onStep(step) }, contentPadding = PaddingValues(horizontal = 10.dp)) {
+                    Text("+${"%.1f".format(step)}")
+                }
+            }
+        }
+        Slider(value = value.coerceIn(range), onValueChange = onChange, valueRange = range, modifier = Modifier.fillMaxWidth())
     }
 }
 

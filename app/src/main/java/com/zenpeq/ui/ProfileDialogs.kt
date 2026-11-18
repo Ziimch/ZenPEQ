@@ -126,7 +126,8 @@ internal fun ImportDialog(
         }
     }
     val canImport = when (result) {
-        is ImportPreview.Apo -> result.result.filters.isNotEmpty() || result.result.preampDb != null
+        is ImportPreview.Apo -> result.result.filters.isNotEmpty() || result.result.preampDb != null ||
+            result.result.graphic.isNotEmpty()
         is ImportPreview.JsonProfiles -> result.profiles.isNotEmpty()
         else -> false
     }
@@ -151,7 +152,8 @@ internal fun ImportDialog(
                     is ImportPreview.Apo -> {
                         val r = result.result
                         val pre = r.preampDb?.let { ", preamp ${"%.1f".format(it)} dB" } ?: ""
-                        Text("Equalizer APO text: ${r.filters.size} filter(s)$pre", style = MaterialTheme.typography.bodySmall)
+                        val gfx = if (r.graphic.isNotEmpty()) ", GraphicEQ ${r.graphic.size} pts" else ""
+                        Text("Equalizer APO text: ${r.filters.size} filter(s)$pre$gfx", style = MaterialTheme.typography.bodySmall)
                         r.warnings.forEach {
                             Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
                         }
@@ -181,8 +183,9 @@ private enum class ExportFormat(val label: String, val ext: String, val mime: St
 internal fun ExportDialog(profile: EqProfile, onDismiss: () -> Unit) {
     val ctx = LocalContext.current
     var format by remember { mutableStateOf(ExportFormat.JSON) }
-    val content = remember(profile, format) {
-        if (format == ExportFormat.JSON) ProfileIo.toJson(profile) else ProfileIo.toApoText(profile)
+    var lsq by remember { mutableStateOf(false) }
+    val content = remember(profile, format, lsq) {
+        if (format == ExportFormat.JSON) ProfileIo.toJson(profile) else ProfileIo.toApoText(profile, lsq)
     }
     val fileName = ProfileIo.fileName(profile, format.ext)
     val jsonSaver = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
@@ -200,6 +203,13 @@ internal fun ExportDialog(profile: EqProfile, onDismiss: () -> Unit) {
                     ExportFormat.entries.forEach { f ->
                         FilterChip(selected = format == f, onClick = { format = f }, label = { Text(f.label) })
                         Spacer(Modifier.width(8.dp))
+                    }
+                }
+                if (format == ExportFormat.APO) {
+                    Row {
+                        FilterChip(selected = !lsq, onClick = { lsq = false }, label = { Text("LSC / HSC") })
+                        Spacer(Modifier.width(8.dp))
+                        FilterChip(selected = lsq, onClick = { lsq = true }, label = { Text("LSQ / HSQ") })
                     }
                 }
                 Text(

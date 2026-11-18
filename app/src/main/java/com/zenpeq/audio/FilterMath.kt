@@ -2,8 +2,14 @@ package com.zenpeq.audio
 
 import com.zenpeq.model.EqFilter
 import com.zenpeq.model.FilterType
+import com.zenpeq.model.GraphicPoint
+import com.zenpeq.model.MAX_FREQ_HZ
+import com.zenpeq.model.MAX_Q
+import com.zenpeq.model.MIN_FREQ_HZ
+import com.zenpeq.model.MIN_Q
 import kotlin.math.PI
 import kotlin.math.cos
+import kotlin.math.ln
 import kotlin.math.log10
 import kotlin.math.pow
 import kotlin.math.sin
@@ -20,7 +26,8 @@ class BandGrid(val count: Int) {
 
 /**
  * RBJ biquad magnitude responses. DynamicsProcessing bands have no Q, so the engine sums the
- * response of every parametric filter and writes that curve onto a dense band grid.
+ * response of every parametric filter (plus an optional GraphicEQ layer) and writes that curve
+ * onto a dense band grid.
  */
 object FilterMath {
     private const val FS = 48_000.0
@@ -33,10 +40,10 @@ object FilterMath {
     )
 
     private fun design(f: EqFilter): Biquad {
-        val a = 10.0.pow(f.gainDb / 40.0)
-        val w0 = 2.0 * PI * f.freq.coerceIn(10f, 22_000f) / FS
+        val a = 10.0.pow(f.gainDb.coerceIn(-24f, 24f) / 40.0)
+        val w0 = 2.0 * PI * f.freq.coerceIn(MIN_FREQ_HZ, MAX_FREQ_HZ) / FS
         val c = cos(w0)
-        val alpha = sin(w0) / (2.0 * f.q.coerceIn(0.1f, 30f))
+        val alpha = sin(w0) / (2.0 * f.q.coerceIn(MIN_Q, MAX_Q))
         return when (f.type) {
             FilterType.PK -> Biquad(
                 1 + alpha * a, -2 * c, 1 - alpha * a,
@@ -77,9 +84,44 @@ object FilterMath {
         return 10.0 * log10((nr * nr + ni * ni) / (dr * dr + di * di))
     }
 
-    /** Combined response in dB of all enabled filters at each frequency. */
-    fun curve(filters: List<EqFilter>, freqs: DoubleArray): DoubleArray {
+    /** Response of a single filter (for drawing individual band curves). */
+    fun filterCurve(f: EqFilter, freqs: DoubleArray): DoubleArray {
+        val bq = design(f)
+        return DoubleArray(freqs.size) { magDb(bq, freqs[it]) }
+    }
+
+    /** GraphicEQ layer, linearly interpolated over log-frequency, held flat outside its range. */
+    fun graphicCurve(points: List<GraphicPoint>, freqs: DoubleArray): DoubleArray {
+        if (points.isEmpty()) return DoubleArray(freqs.size)
+        val p = points.sortedBy { it.freq }
+        return DoubleArray(freqs.size) { i ->
+            val hz = freqs[i]
+            when {
+                hz <= p.first().freq -> p.first().gainDb.toDouble()
+                hz >= p.last().freq -> p.last().gainDb.toDouble()
+                else -> {
+                    var lo = 0
+                    var hi = p.size - 1
+                    while (hi - lo > 1) {
+                        val mid = (lo + hi) ushr 1
+                        if (p[mid].freq <= hz) lo = mid else hi = mid
+                    }
+                    val f0 = p[lo].freq.toDouble()
+                    val f1 = p[hi].freq.toDouble()
+                    if (f1 <= f0) p[lo].gainDb.toDouble()
+                    else {
+                        val t = ln(hz / f0) / ln(f1 / f0)
+                        p[lo].gainDb + (p[hi].gainDb - p[lo].gainDb).toDouble() * t
+                    }
+                }
+            }
+        }
+    }
+
+    /** Combined response in dB of all enabled filters (+ graphic layer) at each frequency. */
+    fun curve(filters: List<EqFilter>, freqs: DoubleArray, graphic: List<GraphicPoint> = emptyList()): DoubleArray {
         val bq = filters.filter { it.enabled }.map { design(it) }
-        return DoubleArray(freqs.size) { i -> bq.sumOf { magDb(it, freqs[i]) } }
+        val g = graphicCurve(graphic, freqs)
+        return DoubleArray(freqs.size) { i -> bq.sumOf { magDb(it, freqs[i]) } + g[i] }
     }
 }

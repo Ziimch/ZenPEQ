@@ -96,7 +96,10 @@ class ProfileCycleTile : BaseTile() {
             if (profiles.isEmpty()) return@launch
             val active = repo.settings.first().activeProfileId
             val idx = profiles.indexOfFirst { it.id == active }
-            repo.setActive(profiles[(idx + 1) % profiles.size].id)
+            repo.setActive(
+                profiles[(idx + 1) % profiles.size].id,
+                EngineStatus.info.value.deviceKey.takeIf { it.isNotEmpty() },
+            )
             ensureService()
         }
     }

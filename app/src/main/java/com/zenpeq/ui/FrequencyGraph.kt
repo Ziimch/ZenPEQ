@@ -1,6 +1,7 @@
 package com.zenpeq.ui
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.drag
@@ -21,19 +22,27 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.drawText
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.zenpeq.audio.FilterMath
 import com.zenpeq.model.EqFilter
+import com.zenpeq.model.GraphicPoint
 import kotlin.math.hypot
 import kotlin.math.ln
 import kotlin.math.pow
 
 private const val RANGE_DB = 15f
+private const val POINTS = 160
 
 private fun xOf(hz: Float, w: Float) = (ln(hz / 20f) / ln(1000f)).coerceIn(0f, 1f) * w
 private fun hzOf(x: Float, w: Float) = 20f * 1000f.pow((x / w).coerceIn(0f, 1f))
@@ -42,19 +51,32 @@ private fun dbOf(y: Float, h: Float) = (0.5f - (y / h).coerceIn(0f, 1f)) * 2 * R
 
 internal fun formatHz(hz: Float) = if (hz >= 1000f) "%.2f kHz".format(hz / 1000f) else "%.0f Hz".format(hz)
 
+private fun DrawScope.curvePath(curve: DoubleArray): Path {
+    val path = Path()
+    curve.forEachIndexed { i, db ->
+        val x = size.width * i / (curve.size - 1)
+        if (i == 0) path.moveTo(x, yOf(db.toFloat(), size.height)) else path.lineTo(x, yOf(db.toFloat(), size.height))
+    }
+    return path
+}
+
 /**
- * Response curve with one draggable point per band: horizontal = log frequency, vertical = gain.
- * A touch that doesn't land on a point is left alone so the surrounding list can still scroll.
+ * Log-frequency response graph. Individual band curves are drawn subtly, the GraphicEQ layer dashed,
+ * and the summed curve bright. Each band has a draggable point (horizontal = frequency, vertical = gain);
+ * touches that miss every point are left alone so the surrounding list still scrolls.
  */
 @Composable
 fun FrequencyGraph(
     filters: List<EqFilter>,
+    graphic: List<GraphicPoint>,
     selected: Int,
     onSelect: (Int) -> Unit,
     onMove: (index: Int, hz: Float, db: Float) -> Unit,
 ) {
-    val freqs = remember { DoubleArray(200) { 20.0 * 1000.0.pow(it / 199.0) } }
-    val curve = remember(filters) { FilterMath.curve(filters, freqs) }
+    val freqs = remember { DoubleArray(POINTS) { 20.0 * 1000.0.pow(it / (POINTS - 1.0)) } }
+    val summed = remember(filters, graphic) { FilterMath.curve(filters, freqs, graphic) }
+    val perBand = remember(filters) { filters.map { if (it.enabled) FilterMath.filterCurve(it, freqs) else null } }
+    val graphicCurve = remember(graphic) { if (graphic.isEmpty()) null else FilterMath.graphicCurve(graphic, freqs) }
     val latestFilters by rememberUpdatedState(filters)
     val latestSelect by rememberUpdatedState(onSelect)
     val latestMove by rememberUpdatedState(onMove)
@@ -64,11 +86,13 @@ fun FrequencyGraph(
     val grid = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.15f)
     val pointColor = MaterialTheme.colorScheme.secondary
     val offColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.35f)
+    val textMeasurer = rememberTextMeasurer()
+    val labelStyle = TextStyle(fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
     Canvas(
         Modifier
             .fillMaxWidth()
-            .height(200.dp)
+            .height(220.dp)
             .pointerInput(Unit) {
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
@@ -98,16 +122,31 @@ fun FrequencyGraph(
         val h = size.height
         for (db in listOf(-10f, 0f, 10f)) {
             drawLine(grid, Offset(0f, yOf(db, h)), Offset(w, yOf(db, h)), 1.dp.toPx())
+            drawText(textMeasurer, "%+.0f".format(db), Offset(2.dp.toPx(), yOf(db, h) - 12.dp.toPx()), labelStyle)
         }
-        for (hz in listOf(100f, 1000f, 10000f)) {
+        for ((hz, name) in listOf(100f to "100", 1000f to "1k", 10000f to "10k")) {
             drawLine(grid, Offset(xOf(hz, w), 0f), Offset(xOf(hz, w), h), 1.dp.toPx())
+            drawText(textMeasurer, name, Offset(xOf(hz, w) + 3.dp.toPx(), h - 14.dp.toPx()), labelStyle)
         }
-        val path = Path()
-        curve.forEachIndexed { i, db ->
-            val x = w * i / (curve.size - 1)
-            if (i == 0) path.moveTo(x, yOf(db.toFloat(), h)) else path.lineTo(x, yOf(db.toFloat(), h))
+
+        // Individual band curves, subtle (selected one slightly stronger).
+        perBand.forEachIndexed { i, c ->
+            if (c != null) {
+                drawPath(
+                    curvePath(c),
+                    pointColor.copy(alpha = if (i == selected) 0.75f else 0.28f),
+                    style = Stroke(width = if (i == selected) 2.dp.toPx() else 1.dp.toPx()),
+                )
+            }
         }
-        drawPath(path, line, style = Stroke(width = 3.dp.toPx()))
+        graphicCurve?.let {
+            drawPath(
+                curvePath(it), pointColor.copy(alpha = 0.7f),
+                style = Stroke(width = 1.5.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(14f, 10f))),
+            )
+        }
+        // Summed response, bright.
+        drawPath(curvePath(summed), line, style = Stroke(width = 3.dp.toPx()))
 
         filters.forEachIndexed { i, f ->
             val c = Offset(xOf(f.freq, w), yOf(f.gainDb, h))
@@ -122,9 +161,9 @@ fun FrequencyGraph(
     }
 }
 
-/** ±0.1 dB steppers for the selected band. */
+/** ±0.1 dB steppers for the selected band; tap the value to type an exact gain. */
 @Composable
-fun GainFineTune(index: Int, filter: EqFilter?, onNudge: (Float) -> Unit) {
+fun GainFineTune(index: Int, filter: EqFilter?, onNudge: (Float) -> Unit, onEdit: () -> Unit) {
     if (filter == null) {
         Text("Add a band to edit it on the graph", style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -136,8 +175,13 @@ fun GainFineTune(index: Int, filter: EqFilter?, onNudge: (Float) -> Unit) {
             modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall,
         )
         OutlinedButton(onClick = { onNudge(-0.1f) }, contentPadding = PaddingValues(horizontal = 12.dp)) { Text("−0.1") }
-        Text("%.1f dB".format(filter.gainDb), Modifier.width(76.dp), textAlign = TextAlign.Center,
-            style = MaterialTheme.typography.bodyMedium)
+        Text(
+            "%.1f dB".format(filter.gainDb),
+            Modifier.width(76.dp).clickable(onClick = onEdit),
+            textAlign = TextAlign.Center,
+            color = MaterialTheme.colorScheme.primary,
+            style = MaterialTheme.typography.bodyMedium,
+        )
         OutlinedButton(onClick = { onNudge(0.1f) }, contentPadding = PaddingValues(horizontal = 12.dp)) { Text("+0.1") }
     }
 }

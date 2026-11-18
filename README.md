@@ -24,3 +24,9 @@ Optional repo secrets for a signed release: `KEYSTORE_BASE64`, `KEYSTORE_PASSWOR
 - Audio session mode: Auto (global, falling back to per-app), Global, Per-app. Per-app attaches to sessions announced via `ACTION_OPEN_AUDIO_EFFECT_CONTROL_SESSION`; players that never broadcast it can't be equalized in that mode.
 - Boot restart + battery-optimization hint. Note: targeting API 35+ forbids starting a `mediaPlayback` foreground service from `BOOT_COMPLETED`.
 - Drag band points on the graph; ±0.1 dB steppers; profile search.
+
+## v1.2
+- Up to 16 PEQ bands (peak / low-shelf / high-shelf), gain ±15 dB, Q 0.4–12; numeric entry for freq/gain/Q/preamp (`4.5k` works), ±0.1 steppers.
+- Biquad response (+ optional `GraphicEQ:` layer) rendered onto a 64-band PreEq (falls back to 32/16), plus a brickwall limiter (0 dBFS, 1 ms attack) after the EQ.
+- APO/AutoEq import/export incl. single-line `GraphicEQ:`; export can use LSC/HSC or LSQ/HSQ shelf tokens.
+- Per-output profiles: 3.5 mm, USB DAC, Bluetooth (by name) remember their last profile. Notification has an A/B bypass action.
