@@ -21,6 +21,7 @@ import com.zenpeq.model.MAX_Q
 import com.zenpeq.model.MIN_Q
 import com.zenpeq.model.SessionMode
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
