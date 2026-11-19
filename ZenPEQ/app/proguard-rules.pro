@@ -1,0 +1,3 @@
+-keep class com.zenpeq.model.** { *; }
+-keepclassmembers class com.zenpeq.model.** { *** Companion; }
+-keepattributes *Annotation*, InnerClasses

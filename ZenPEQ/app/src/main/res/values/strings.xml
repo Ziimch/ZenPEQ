@@ -1,0 +1,8 @@
+<resources>
+    <string name="app_name">ZenPEQ</string>
+    <string name="notif_channel">Equalizer engine</string>
+    <string name="notif_starting">Starting…</string>
+    <string name="stop">Stop</string>
+    <string name="tile_toggle">ZenPEQ</string>
+    <string name="tile_profile">ZenPEQ profile</string>
+</resources>
