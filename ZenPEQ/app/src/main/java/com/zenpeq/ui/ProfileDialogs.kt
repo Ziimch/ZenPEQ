@@ -136,7 +136,7 @@ internal fun ImportDialog(
         title = { Text("Import profile") },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = { picker.launch(arrayOf("*/*")) }, modifier = Modifier.fillMaxWidth()) {
+                ZOutlinedButton(onClick = { picker.launch(arrayOf("*/*")) }, modifier = Modifier.fillMaxWidth()) {
                     Text("Open .json / .txt file")
                 }
                 OutlinedTextField(

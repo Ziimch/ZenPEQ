@@ -5,20 +5,20 @@
     android:viewportHeight="108">
     <!-- enso ring (open circle) -->
     <path
-        android:strokeColor="#2DD4BF"
+        android:strokeColor="#98BB6C"
         android:strokeAlpha="0.55"
         android:strokeWidth="3"
         android:strokeLineCap="round"
         android:pathData="M73.28,31.02 A30,30 0 1,1 59.21,24.46" />
     <!-- parametric peak -->
     <path
-        android:strokeColor="#2DD4BF"
+        android:strokeColor="#98BB6C"
         android:strokeWidth="4.5"
         android:strokeLineCap="round"
         android:strokeLineJoin="round"
         android:pathData="M32,63 C41,63 44,41 54,41 C64,41 67,63 76,63" />
     <!-- band handle -->
     <path
-        android:fillColor="#FFFFFF"
+        android:fillColor="#DCD7BA"
         android:pathData="M54,41 m-4.2,0 a4.2,4.2 0 1,0 8.4,0 a4.2,4.2 0 1,0 -8.4,0" />
 </vector>

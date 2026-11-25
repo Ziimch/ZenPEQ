@@ -13,6 +13,7 @@ data class EngineInfo(
     val preampDb: Float = 0f,
     val peakDb: Float = 0f,
     val limiterActive: Boolean = false,
+    val compressorActive: Boolean = false,
     val deviceKey: String = "",
     val deviceLabel: String = "",
     val error: String? = null,

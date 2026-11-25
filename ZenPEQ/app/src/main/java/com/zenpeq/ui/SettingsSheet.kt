@@ -22,6 +22,7 @@ import androidx.compose.ui.unit.dp
 import com.zenpeq.audio.EngineInfo
 import com.zenpeq.audio.EngineRoute
 import com.zenpeq.model.EqProfile
+import com.zenpeq.model.CompressorSettings
 import com.zenpeq.model.EqSettings
 import com.zenpeq.model.MAX_PREAMP_DB
 import com.zenpeq.model.MIN_PREAMP_DB
@@ -30,13 +31,16 @@ import kotlin.math.roundToInt
 
 private fun engineLine(i: EngineInfo): String = when {
     !i.serviceRunning -> "Starting…"
-    i.route == EngineRoute.GLOBAL -> "Global · ${i.bands} bands" + if (i.limiterActive) " · limiter" else ""
+    i.route == EngineRoute.GLOBAL -> "Global · ${i.bands} bands" + extras(i)
     i.route == EngineRoute.PER_APP && i.appSessions > 0 ->
-        "Per-app · ${i.appSessions} player(s)" + if (i.limiterActive) " · limiter" else ""
+        "Per-app · ${i.appSessions} player(s)" + extras(i)
     i.route == EngineRoute.PER_APP -> "Waiting for a player"
     i.error != null -> "Unavailable: ${i.error}"
     else -> "Bypassed"
 }
+
+private fun extras(i: EngineInfo) =
+    (if (i.limiterActive) " · limiter" else "") + (if (i.compressorActive) " · compressor" else "")
 
 private fun balanceText(db: Float): String = when {
     db > 0.04f -> "R +${"%.1f".format(db)} dB"
@@ -51,8 +55,24 @@ private fun sessionLabel(m: SessionMode) = when (m) {
 }
 
 @Composable
+private fun CompressorControls(c: CompressorSettings, onChange: (CompressorSettings) -> Unit) {
+    fun r1(v: Float) = (v * 10).roundToInt() / 10f
+    LabeledSlider("Threshold", "%.0f dB".format(c.thresholdDb), c.thresholdDb, -60f..0f,
+        onChange = { onChange(c.copy(thresholdDb = it.roundToInt().toFloat())) })
+    LabeledSlider("Ratio", "%.1f : 1".format(c.ratio), c.ratio, 1f..10f,
+        onChange = { onChange(c.copy(ratio = r1(it))) })
+    LabeledSlider("Attack", "%.0f ms".format(c.attackMs), c.attackMs, 1f..100f,
+        onChange = { onChange(c.copy(attackMs = it.roundToInt().toFloat())) })
+    LabeledSlider("Release", "%.0f ms".format(c.releaseMs), c.releaseMs, 10f..1000f,
+        onChange = { onChange(c.copy(releaseMs = (it / 10).roundToInt() * 10f)) })
+    LabeledSlider("Makeup gain", "%.1f dB".format(c.makeupDb), c.makeupDb, 0f..12f,
+        onChange = { onChange(c.copy(makeupDb = r1(it))) }, step = 0.1f,
+        onStep = { onChange(c.copy(makeupDb = r1((c.makeupDb + it).coerceIn(0f, 12f)))) })
+}
+
+@Composable
 private fun SectionTitle(text: String) =
-    Text(text, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+    Text(text.lowercase(), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
 
 /** All engine-level options live here so the main screen stays simple. */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -101,6 +121,16 @@ internal fun SettingsSheet(
             )
 
             HorizontalDivider()
+            SectionTitle("Compressor")
+            val c = settings.compressor
+            RowSwitch("Compressor", c.enabled, { vm.setCompressor(c.copy(enabled = it)) }, "Evens out loud and quiet parts")
+            if (c.enabled) CompressorControls(c, vm::setCompressor)
+
+            HorizontalDivider()
+            SectionTitle("Presets")
+            RowSwitch("Autosave", settings.autosave, vm::setAutosave, "Off: use Save and Revert")
+
+            HorizontalDivider()
             SectionTitle("Output")
             RowSwitch("Auto-switch by output", settings.autoDevice, vm::setAutoDevice, "A profile per device")
             if (info.deviceKey.isNotEmpty()) {
@@ -139,7 +169,7 @@ internal fun SettingsSheet(
                 if (ignoringBattery) {
                     Text("Allowed", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 } else {
-                    Button(onClick = onAllowBattery) { Text("Allow") }
+                    ZButton(onClick = onAllowBattery) { Text("Allow") }
                 }
             }
         }

@@ -1,6 +1,7 @@
 package com.zenpeq.model
 
 import kotlinx.serialization.Serializable
+import kotlin.math.pow
 import kotlin.math.roundToInt
 
 const val MAX_FILTERS = 16
@@ -39,7 +40,47 @@ data class EqProfile(
     val graphic: List<GraphicPoint> = emptyList(),
     /** Set when the profile was built by Simple mode's Tone Pad; filters are derived from it. */
     val tone: ToneState? = null,
+    /** A locked preset ignores edits until unlocked. */
+    val locked: Boolean = false,
+    /** Bass / Treble tone knobs (dB), applied on top of everything else. */
+    val bassDb: Float = 0f,
+    val trebleDb: Float = 0f,
+    /** Layout of the Graphic EQ sliders; [graphic] then holds exactly [GraphicConfig.count] points. */
+    val gcfg: GraphicConfig? = null,
 )
+
+/** Graphic EQ layout: [count] bands log-spaced from [startHz] to [endHz]. */
+@Serializable
+data class GraphicConfig(val count: Int = 10, val startHz: Float = 31f, val endHz: Float = 16_000f) {
+    fun centers(): List<Float> = List(count) { i ->
+        startHz * (endHz / startHz).pow(i / (count - 1f))
+    }
+}
+
+val GRAPHIC_COUNTS = listOf(5, 8, 10, 12, 15, 16, 24, 31, 32)
+
+/** Bass / Treble knobs as shelf filters. */
+fun EqProfile.toneFilters(): List<EqFilter> = buildList {
+    if (bassDb != 0f) add(EqFilter(FilterType.LSC, 100f, bassDb, 0.6f))
+    if (trebleDb != 0f) add(EqFilter(FilterType.HSC, 5000f, trebleDb, 0.6f))
+}
+
+/** Everything that shapes the sound as filters: enabled PEQ bands (max [MAX_FILTERS]) plus the tone knobs. */
+fun EqProfile.effectiveFilters(): List<EqFilter> =
+    filters.filter { it.enabled }.take(MAX_FILTERS) + toneFilters()
+
+/** Single-band compressor (DynamicsProcessing MBC with one band). */
+@Serializable
+data class CompressorSettings(
+    val enabled: Boolean = false,
+    val thresholdDb: Float = -18f,
+    val ratio: Float = 3f,
+    val attackMs: Float = 10f,
+    val releaseMs: Float = 120f,
+    val makeupDb: Float = 0f,
+)
+
+enum class UiMode { SIMPLE, GRAPHIC, PRO }
 
 /**
  * Zen Tone Pad position. x: -1 warm … +1 bright (low/high shelf balance).
@@ -89,7 +130,11 @@ data class EqSettings(
     val sessionMode: SessionMode = SessionMode.AUTO,
     val batteryHintDismissed: Boolean = false,
     val limiterEnabled: Boolean = true,
-    val proMode: Boolean = false,
+    val uiMode: UiMode = UiMode.SIMPLE,
+    val autosave: Boolean = true,
+    val compressor: CompressorSettings = CompressorSettings(),
+    /** Output devices we already offered an AutoEq preset for. */
+    val autoEqSeen: Set<String> = emptySet(),
     /** -3..+3 dB. Positive = right louder (left is attenuated); negative = left louder. */
     val balanceDb: Float = 0f,
     /** Output device key -> profile id (last profile used on that output). */

@@ -55,3 +55,12 @@ Obsidian / slate / hairline / jade / amber theme. Top bar: wordmark, live output
 - Auto-preamp = peak of the summed 128-band curve + 0.3 dB. Limiter: -0.5 dBFS, 3 ms attack, 60 ms release, 12:1.
 - Changes ramp over ~20 ms from the currently applied gains (live while dragging); bypass and enable fade instead of clicking.
 - Settings: L/R balance, -3…+3 dB in 0.1 dB steps (attenuates the louder side only).
+
+## v1.6 Poweramp-style features
+- **Graphic EQ** (new *Graphic* mode): 5/8/10/12/15/16/24/31/32 bands, configurable start/end frequency, ±15 dB per band, plus **Bass / Treble / Preamp knobs** (drag, long-press to type, double-tap to reset). Graphic bands export as a `GraphicEQ:` line.
+- **Compressor** (Settings): threshold, ratio, attack, release, makeup gain — single-band DynamicsProcessing MBC stage.
+- **AutoEq database**: ⋮ → *AutoEq presets…* searches the public AutoEq index (downloaded once, ~850 KB, needs internet). When a Bluetooth/USB device with no profile connects, ZenPEQ looks up its name and offers the matching preset (banner + notification).
+- **Preset lock** (⋮ → Lock preset) and **Autosave** (Settings): with Autosave off, edits stay live but a *Save / Revert* bar appears.
+
+## v1.7 Omarchy / Kanagawa theme
+Matches the launcher widgets: Kanagawa palette (colours sampled from them), square 1 dp-bordered "windows", cream fill for the active item, JetBrains Mono (OFL, `docs/JetBrainsMono-OFL.txt`), a faint seigaiha wave background, blinking-cursor wordmark.

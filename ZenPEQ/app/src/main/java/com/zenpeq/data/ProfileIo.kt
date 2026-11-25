@@ -13,6 +13,8 @@ import com.zenpeq.model.MAX_PREAMP_DB
 import com.zenpeq.model.MAX_Q
 import com.zenpeq.model.MIN_FREQ_HZ
 import com.zenpeq.model.MIN_PREAMP_DB
+import com.zenpeq.model.effectiveFilters
+import com.zenpeq.model.toneFilters
 import com.zenpeq.model.MIN_Q
 import com.zenpeq.model.ParseResult
 import kotlinx.serialization.SerializationException
@@ -45,7 +47,7 @@ object ProfileIo {
     fun effectivePreamp(p: EqProfile): Float {
         if (!p.autoPreamp) return p.preampDb
         // Same computation the engine uses: peak of the summed 128-band curve plus the safety margin.
-        val gains = FilterMath.renderBands(BandGrid(FilterMath.BANDS), p.filters, p.graphic)
+        val gains = FilterMath.renderBands(BandGrid(FilterMath.BANDS), p.effectiveFilters(), p.graphic)
         return (FilterMath.autoPreampDb(gains) * 10).roundToInt() / 10f
     }
 
@@ -55,7 +57,8 @@ object ProfileIo {
      */
     fun toApoText(p: EqProfile, lsqShelves: Boolean = false): String = buildString {
         appendLine("Preamp: ${f1(effectivePreamp(p))} dB")
-        p.filters.take(MAX_FILTERS).forEachIndexed { i, f ->
+        // Bass/Treble knobs are exported as ordinary shelf filters so other tools sound the same.
+        (p.filters.take(MAX_FILTERS) + p.toneFilters()).forEachIndexed { i, f ->
             val type = when (f.type) {
                 FilterType.PK -> "PK"
                 FilterType.LSC -> if (lsqShelves) "LSQ" else "LSC"
@@ -109,6 +112,8 @@ object ProfileIo {
         id = UUID.randomUUID().toString(),
         name = p.name.ifBlank { "Imported EQ" },
         preampDb = p.preampDb.coerceIn(MIN_PREAMP_DB, MAX_PREAMP_DB),
+        bassDb = p.bassDb.coerceIn(-12f, 12f),
+        trebleDb = p.trebleDb.coerceIn(-12f, 12f),
         filters = p.filters.take(MAX_FILTERS).map {
             it.copy(
                 freq = it.freq.coerceIn(MIN_FREQ_HZ, MAX_FREQ_HZ),

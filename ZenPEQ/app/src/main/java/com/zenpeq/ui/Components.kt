@@ -10,6 +10,10 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -56,7 +60,7 @@ internal fun requestIgnoreBattery(ctx: Context) {
 internal fun ZenCard(content: @Composable ColumnScope.() -> Unit) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f)),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
     ) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp), content = content)
@@ -93,7 +97,7 @@ internal fun LabeledSlider(
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(label, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
             if (onStep != null) {
-                OutlinedButton(onClick = { onStep(-step) }, contentPadding = PaddingValues(horizontal = 10.dp)) {
+                ZOutlinedButton(onClick = { onStep(-step) }, contentPadding = PaddingValues(horizontal = 10.dp)) {
                     Text("−${"%.1f".format(step)}")
                 }
             }
@@ -105,7 +109,7 @@ internal fun LabeledSlider(
                 style = MaterialTheme.typography.bodyMedium,
             )
             if (onStep != null) {
-                OutlinedButton(onClick = { onStep(step) }, contentPadding = PaddingValues(horizontal = 10.dp)) {
+                ZOutlinedButton(onClick = { onStep(step) }, contentPadding = PaddingValues(horizontal = 10.dp)) {
                     Text("+${"%.1f".format(step)}")
                 }
             }
@@ -123,5 +127,43 @@ internal fun NameDialog(title: String, initial: String, onDismiss: () -> Unit, o
         text = { OutlinedTextField(name, { name = it }, singleLine = true, label = { Text("Name") }) },
         confirmButton = { TextButton(onClick = { onOk(name) }) { Text("Save") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
+/** Hyprland-style window corners: none. */
+internal val ZenCorner = RoundedCornerShape(0.dp)
+internal val ZenShape: Shape = ZenCorner
+
+/** Primary action: green outline, transparent fill (like the launcher's "clean all"). */
+@Composable
+internal fun ZButton(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    contentPadding: PaddingValues = ButtonDefaults.ContentPadding,
+    content: @Composable RowScope.() -> Unit,
+) {
+    androidx.compose.material3.OutlinedButton(
+        onClick = onClick, modifier = modifier, enabled = enabled, shape = ZenShape,
+        colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.primary),
+        border = BorderStroke(1.dp, if (enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline),
+        contentPadding = contentPadding, content = content,
+    )
+}
+
+/** Secondary action: grey-violet outline. */
+@Composable
+internal fun ZOutlinedButton(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    contentPadding: PaddingValues = ButtonDefaults.ContentPadding,
+    content: @Composable RowScope.() -> Unit,
+) {
+    androidx.compose.material3.OutlinedButton(
+        onClick = onClick, modifier = modifier, enabled = enabled, shape = ZenShape,
+        colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.onSurface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+        contentPadding = contentPadding, content = content,
     )
 }

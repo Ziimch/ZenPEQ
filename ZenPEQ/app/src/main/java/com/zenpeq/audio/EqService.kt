@@ -21,7 +21,11 @@ import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import com.zenpeq.R
 import com.zenpeq.ZenPeqApp
+import com.zenpeq.data.AutoEqRepository
+import com.zenpeq.data.AutoEqSuggestion
+import com.zenpeq.data.AutoEqSuggestions
 import com.zenpeq.data.ZenRepository
+import com.zenpeq.data.importAutoEqPreset
 import com.zenpeq.model.EqProfile
 import com.zenpeq.model.EqSettings
 import com.zenpeq.ui.MainActivity
@@ -57,6 +61,7 @@ class EqService : Service() {
     private lateinit var audioManager: AudioManager
     private val route = MutableStateFlow(Route(OutputDevices.DEFAULT, 48_000))
     private val repo: ZenRepository get() = (application as ZenPeqApp).repo
+    private val autoEq: AutoEqRepository get() = (application as ZenPeqApp).autoEq
     private val sessionReceiver = AudioSessionReceiver()
     private var lastNotification: Pair<String, Boolean>? = null
 
@@ -88,6 +93,7 @@ class EqService : Service() {
         )
 
         scope.launch { applyDeviceRules(route.value.device, initial = true) }
+        suggestAutoEq(route.value.device)
         scope.launch {
             combine(repo.settings, repo.profiles, route, SessionRegistry.sessions, LiveEq.profile) { s, p, r, ses, live ->
                 Snapshot(s, p, r, ses.keys, live)
@@ -106,6 +112,7 @@ class EqService : Service() {
                 return START_NOT_STICKY
             }
             ACTION_TOGGLE -> scope.launch { repo.setEnabled(!repo.settings.first().eqEnabled) } // A/B bypass
+            ACTION_APPLY_AUTOEQ -> AutoEqSuggestions.current.value?.let { applySuggestion(it) }
         }
         return START_STICKY
     }
@@ -132,7 +139,10 @@ class EqService : Service() {
         val was = route.value
         if (now.device.key == was.device.key && now.sampleRate == was.sampleRate) return
         route.value = now
-        if (now.device.key != was.device.key) scope.launch { applyDeviceRules(now.device, initial = false) }
+        if (now.device.key != was.device.key) {
+            scope.launch { applyDeviceRules(now.device, initial = false) }
+            suggestAutoEq(now.device)
+        }
     }
 
     /**
@@ -156,13 +166,56 @@ class EqService : Service() {
         }
     }
 
+    /**
+     * Bluetooth / USB output connected with no profile of its own: look its name up in the AutoEq index
+     * and offer the matching preset (in-app banner + notification). Each device is offered once.
+     */
+    private fun suggestAutoEq(dev: OutputDevice) {
+        if (dev.kind != OutputKind.BLUETOOTH && dev.kind != OutputKind.USB) return
+        scope.launch {
+            val s = repo.settings.first()
+            if (dev.key in s.autoEqSeen || s.deviceProfiles.containsKey(dev.key)) return@launch
+            val entry = runCatching { autoEq.bestMatch(dev.key.substringAfter(':')) }.getOrNull() ?: return@launch
+            AutoEqSuggestions.current.value = AutoEqSuggestion(dev.key, dev.label, entry)
+            val open = PendingIntent.getActivity(
+                this@EqService, 0, Intent(this@EqService, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE,
+            )
+            val apply = PendingIntent.getService(
+                this@EqService, 3, Intent(this@EqService, EqService::class.java).setAction(ACTION_APPLY_AUTOEQ),
+                PendingIntent.FLAG_IMMUTABLE,
+            )
+            val n = NotificationCompat.Builder(this@EqService, CHANNEL)
+                .setSmallIcon(R.drawable.ic_tile)
+                .setContentTitle("AutoEq preset for ${dev.label}")
+                .setContentText(entry.name + " · " + entry.source)
+                .setContentIntent(open)
+                .addAction(0, "Apply", apply)
+                .setAutoCancel(true)
+                .setPriority(NotificationCompat.PRIORITY_LOW)
+                .build()
+            getSystemService(NotificationManager::class.java).notify(SUGGEST_NOTIF_ID, n)
+        }
+    }
+
+    private fun applySuggestion(sug: AutoEqSuggestion) {
+        scope.launch {
+            runCatching {
+                val id = importAutoEqPreset(repo, autoEq, sug.entry, sug.deviceKey)
+                repo.activateProfile(id)
+            }
+            repo.markAutoEqSeen(sug.deviceKey)
+            AutoEqSuggestions.current.value = null
+            getSystemService(NotificationManager::class.java).cancel(SUGGEST_NOTIF_ID)
+        }
+    }
+
     private suspend fun render(snap: Snapshot) {
         val s = snap.settings
         val stored = snap.profiles.firstOrNull { it.id == s.activeProfileId } ?: snap.profiles.firstOrNull()
         // The live copy wins while it is the profile being edited.
         val profile = snap.live?.takeIf { it.id == stored?.id } ?: stored
         val r = engine.apply(
-            profile, s.eqEnabled, s.sessionMode, snap.sessions, s.limiterEnabled,
+            profile, s.eqEnabled, s.sessionMode, snap.sessions, s.limiterEnabled, s.compressor,
             snap.route.sampleRate, s.balanceDb,
         )
         val dev = snap.route.device
@@ -174,6 +227,7 @@ class EqService : Service() {
             preampDb = r.preampDb,
             peakDb = r.peakDb,
             limiterActive = r.limiterActive,
+            compressorActive = r.compressorActive,
             deviceKey = dev.key,
             deviceLabel = dev.label,
             error = r.error,
@@ -226,8 +280,10 @@ class EqService : Service() {
     companion object {
         const val ACTION_STOP = "com.zenpeq.action.STOP"
         const val ACTION_TOGGLE = "com.zenpeq.action.TOGGLE"
+        const val ACTION_APPLY_AUTOEQ = "com.zenpeq.action.APPLY_AUTOEQ"
         private const val CHANNEL = "engine"
         private const val NOTIF_ID = 1
+        private const val SUGGEST_NOTIF_ID = 2
 
         fun start(context: Context) {
             ContextCompat.startForegroundService(context, Intent(context, EqService::class.java))

@@ -27,6 +27,10 @@ enum class NumericField(val label: String, val unit: String, val min: Float, val
     GAIN("Gain", "dB", -MAX_GAIN_DB, MAX_GAIN_DB, 1),
     Q("Q factor", "", MIN_Q, MAX_Q, 2),
     PREAMP("Preamp", "dB", MIN_PREAMP_DB, MAX_PREAMP_DB, 1),
+    BASS("Bass", "dB", -12f, 12f, 1),
+    TREBLE("Treble", "dB", -12f, 12f, 1),
+    GSTART("Start frequency", "Hz", MIN_FREQ_HZ, 2000f, 0),
+    GEND("End frequency", "Hz", 1000f, MAX_FREQ_HZ, 0),
 }
 
 /** Accepts "4500", "4.5k", "4,5 kHz", "-3.5 dB". Returns null if unparsable or out of range. */
@@ -34,7 +38,8 @@ internal fun parseNumeric(text: String, field: NumericField): Float? {
     var t = text.trim().lowercase().replace(',', '.')
     t = t.removeSuffix("hz").removeSuffix("db").trim()
     var mult = 1f
-    if (field == NumericField.FREQ && t.endsWith("k")) {
+    val freqField = field == NumericField.FREQ || field == NumericField.GSTART || field == NumericField.GEND
+    if (freqField && t.endsWith("k")) {
         t = t.dropLast(1).trim()
         mult = 1000f
     }

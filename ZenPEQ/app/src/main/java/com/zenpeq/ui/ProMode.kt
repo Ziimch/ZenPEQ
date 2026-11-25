@@ -34,7 +34,7 @@ import kotlin.math.exp
 import kotlin.math.ln
 import kotlin.math.roundToInt
 
-/** Numbered band pills 1, 2, 3 … and + Add, scrolling sideways. Amber marks the active band. */
+/** Numbered band pills 1, 2, 3 … and + Add, scrolling sideways. Cream marks the active band. */
 @Composable
 internal fun BandChips(
     filters: List<EqFilter>,
@@ -52,7 +52,7 @@ internal fun BandChips(
         Surface(
             onClick = onAdd,
             enabled = canAdd,
-            shape = RoundedCornerShape(50),
+            shape = ZenShape,
             color = Color.Transparent,
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
         ) {
@@ -60,7 +60,7 @@ internal fun BandChips(
                 "+ Add",
                 Modifier.padding(horizontal = 16.dp, vertical = 9.dp),
                 style = MaterialTheme.typography.labelLarge,
-                color = if (canAdd) ZenPalette.Jade else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f),
+                color = if (canAdd) ZenPalette.Green else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f),
             )
         }
     }
@@ -70,9 +70,9 @@ internal fun BandChips(
 private fun BandPill(label: String, selected: Boolean, enabled: Boolean, onClick: () -> Unit) {
     Surface(
         onClick = onClick,
-        shape = CircleShape,
-        color = if (selected) ZenPalette.Amber else ZenPalette.Slate,
-        border = BorderStroke(1.dp, if (selected) ZenPalette.Amber else ZenPalette.Hairline),
+        shape = ZenShape,
+        color = if (selected) ZenPalette.Cream else ZenPalette.Panel,
+        border = BorderStroke(1.dp, if (selected) ZenPalette.Cream else ZenPalette.Border),
         modifier = Modifier.size(38.dp),
     ) {
         androidx.compose.foundation.layout.Box(contentAlignment = Alignment.Center) {
@@ -80,7 +80,7 @@ private fun BandPill(label: String, selected: Boolean, enabled: Boolean, onClick
                 label,
                 style = MaterialTheme.typography.labelLarge,
                 color = when {
-                    selected -> ZenPalette.OnAmber
+                    selected -> ZenPalette.Ink
                     enabled -> MaterialTheme.colorScheme.onSurface
                     else -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.35f)
                 },
@@ -103,7 +103,7 @@ internal fun BandEditor(
 ) {
     ZenCard {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("Band ${index + 1}", Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
+            Text("band ${index + 1}", Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
             Switch(checked = f.enabled, onCheckedChange = { onChange(f.copy(enabled = it)) })
             IconButton(onClick = onDelete) { Icon(Icons.Default.Delete, "Remove band") }
         }

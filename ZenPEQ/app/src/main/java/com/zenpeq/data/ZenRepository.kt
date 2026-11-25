@@ -7,11 +7,14 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.zenpeq.model.CompressorSettings
 import com.zenpeq.model.EqProfile
 import com.zenpeq.model.EqSettings
 import com.zenpeq.model.Presets
 import com.zenpeq.model.SessionMode
+import com.zenpeq.model.UiMode
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
@@ -33,7 +36,11 @@ class ZenRepository(context: Context) {
         val SESSION_MODE = stringPreferencesKey("session_mode")
         val BATTERY_DISMISSED = booleanPreferencesKey("battery_hint_dismissed")
         val LIMITER = booleanPreferencesKey("limiter_enabled")
-        val PRO_MODE = booleanPreferencesKey("pro_mode")
+        val PRO_MODE = booleanPreferencesKey("pro_mode") // legacy, read for migration
+        val UI_MODE = stringPreferencesKey("ui_mode")
+        val AUTOSAVE = booleanPreferencesKey("autosave")
+        val COMPRESSOR = stringPreferencesKey("compressor_json")
+        val AUTOEQ_SEEN = stringSetPreferencesKey("autoeq_seen")
         val BALANCE = floatPreferencesKey("balance_db")
         val DEVICE_PROFILES = stringPreferencesKey("device_profiles_json")
     }
@@ -65,7 +72,13 @@ class ZenRepository(context: Context) {
                 .getOrDefault(SessionMode.AUTO),
             batteryHintDismissed = p[Keys.BATTERY_DISMISSED] ?: false,
             limiterEnabled = p[Keys.LIMITER] ?: true,
-            proMode = p[Keys.PRO_MODE] ?: false,
+            uiMode = p[Keys.UI_MODE]?.let { runCatching { UiMode.valueOf(it) }.getOrNull() }
+                ?: if (p[Keys.PRO_MODE] == true) UiMode.PRO else UiMode.SIMPLE,
+            autosave = p[Keys.AUTOSAVE] ?: true,
+            compressor = p[Keys.COMPRESSOR]
+                ?.let { runCatching { json.decodeFromString<CompressorSettings>(it) }.getOrNull() }
+                ?: CompressorSettings(),
+            autoEqSeen = p[Keys.AUTOEQ_SEEN] ?: emptySet(),
             balanceDb = p[Keys.BALANCE] ?: 0f,
             deviceProfiles = readMap(p),
         )
@@ -125,7 +138,12 @@ class ZenRepository(context: Context) {
     suspend fun setEnabled(on: Boolean) { store.edit { it[Keys.ENABLED] = on } }
     suspend fun setAutoDevice(on: Boolean) { store.edit { it[Keys.AUTO_DEVICE] = on } }
     suspend fun setLimiter(on: Boolean) { store.edit { it[Keys.LIMITER] = on } }
-    suspend fun setProMode(on: Boolean) { store.edit { it[Keys.PRO_MODE] = on } }
+    suspend fun setUiMode(m: UiMode) { store.edit { it[Keys.UI_MODE] = m.name } }
+    suspend fun setAutosave(on: Boolean) { store.edit { it[Keys.AUTOSAVE] = on } }
+    suspend fun setCompressor(c: CompressorSettings) { store.edit { it[Keys.COMPRESSOR] = json.encodeToString(c) } }
+    suspend fun markAutoEqSeen(deviceKey: String) {
+        store.edit { it[Keys.AUTOEQ_SEEN] = (it[Keys.AUTOEQ_SEEN] ?: emptySet()) + deviceKey }
+    }
     suspend fun setBalance(db: Float) { store.edit { it[Keys.BALANCE] = db } }
     suspend fun setSessionMode(m: SessionMode) { store.edit { it[Keys.SESSION_MODE] = m.name } }
     suspend fun dismissBatteryHint() { store.edit { it[Keys.BATTERY_DISMISSED] = true } }

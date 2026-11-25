@@ -73,6 +73,7 @@ private fun DrawScope.fillPath(curve: DoubleArray): Path {
 fun FrequencyGraph(
     filters: List<EqFilter>,
     graphic: List<GraphicPoint>,
+    extra: List<EqFilter> = emptyList(),
     selected: Int = 0,
     onSelect: (Int) -> Unit = {},
     onMove: (index: Int, hz: Float, db: Float) -> Unit = { _, _, _ -> },
@@ -81,7 +82,7 @@ fun FrequencyGraph(
     height: Dp = 220.dp,
 ) {
     val freqs = remember { DoubleArray(POINTS) { 20.0 * 1000.0.pow(it / (POINTS - 1.0)) } }
-    val summed = remember(filters, graphic) { FilterMath.curve(filters, freqs, graphic) }
+    val summed = remember(filters, extra, graphic) { FilterMath.curve(filters + extra, freqs, graphic) }
     val perBand = remember(filters) { filters.map { if (it.enabled) FilterMath.filterCurve(it, freqs) else null } }
     val graphicCurve = remember(graphic) { if (graphic.isEmpty()) null else FilterMath.graphicCurve(graphic, freqs) }
     val latestFilters by rememberUpdatedState(filters)
@@ -89,9 +90,9 @@ fun FrequencyGraph(
     val latestMove by rememberUpdatedState(onMove)
     val hitRadius = with(LocalDensity.current) { 32.dp.toPx() }
 
-    val jade = ZenPalette.Jade
-    val amber = ZenPalette.Amber
-    val grid = ZenPalette.Hairline
+    val jade = ZenPalette.Green
+    val amber = ZenPalette.Orange
+    val grid = ZenPalette.Border
     val muted = MaterialTheme.colorScheme.onSurface
     val textMeasurer = rememberTextMeasurer()
     val labelStyle = TextStyle(fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -170,7 +171,7 @@ fun FrequencyGraph(
             if (i == selected) {
                 drawCircle(amber.copy(alpha = 0.22f), radius = 15.dp.toPx(), center = c)
                 drawCircle(amber, radius = 7.dp.toPx(), center = c)
-                drawCircle(ZenPalette.Obsidian, radius = 2.5.dp.toPx(), center = c)
+                drawCircle(ZenPalette.Ink0, radius = 2.5.dp.toPx(), center = c)
             } else {
                 val ring: Color = if (f.enabled) muted.copy(alpha = 0.7f) else muted.copy(alpha = 0.3f)
                 drawCircle(ring, radius = 5.dp.toPx(), center = c, style = Stroke(1.5.dp.toPx()))

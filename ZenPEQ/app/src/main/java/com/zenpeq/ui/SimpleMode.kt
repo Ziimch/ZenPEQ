@@ -70,7 +70,7 @@ internal fun TonePad(tone: ToneState, onChange: (x: Float, y: Float) -> Unit) {
         Modifier
             .fillMaxWidth()
             .aspectRatio(1f)
-            .clip(RoundedCornerShape(20.dp))
+            .clip(ZenShape)
             .pointerInput(Unit) {
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
@@ -95,11 +95,11 @@ internal fun TonePad(tone: ToneState, onChange: (x: Float, y: Float) -> Unit) {
         val h = size.height
         val cx = w / 2f
         val cy = h / 2f
-        val corner = CornerRadius(20.dp.toPx())
-        val hairline = ZenPalette.Hairline
-        val jade = ZenPalette.Jade
+        val corner = CornerRadius(0f)
+        val hairline = ZenPalette.Border
+        val jade = ZenPalette.Green
 
-        drawRoundRect(Brush.verticalGradient(listOf(ZenPalette.Slate, ZenPalette.Obsidian)), cornerRadius = corner)
+        drawRoundRect(Brush.verticalGradient(listOf(ZenPalette.Panel, ZenPalette.Ink0)), cornerRadius = corner)
         drawRoundRect(hairline, cornerRadius = corner, style = Stroke(1.dp.toPx()))
 
         // ripples + crosshair
